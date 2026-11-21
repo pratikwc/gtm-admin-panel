@@ -205,9 +205,9 @@ export default async function OutboundEmailPage({ searchParams }: { searchParams
       )}
 
       {em && (
-        <section id="campaigns" className="mt-6 scroll-mt-24 rounded-xl border bg-card shadow-sm">
+        <section id="campaigns" className="mt-6 scroll-mt-24 rounded-2xl border bg-card">
           <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
-            <h2 className="text-[15px] font-semibold">Campaigns</h2>
+            <h2 className="font-display text-xl font-medium tracking-tight">Campaigns</h2>
             <span className="tabular text-sm text-muted-foreground">{fmtInt(campaigns.length)}</span>
             <div className="ml-auto">
               <ExportButton dataset="email-campaigns" />

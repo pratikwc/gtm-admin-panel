@@ -52,6 +52,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: ['var(--font-inter)', 'system-ui', 'Segoe UI', 'sans-serif'],
+        display: ['var(--font-display)', 'var(--font-inter)', 'system-ui', 'sans-serif'],
       },
       keyframes: {
         'accordion-down': {

@@ -40,12 +40,12 @@ export function KpiTile({
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-xl border bg-card p-4 shadow-sm',
+        'relative overflow-hidden bg-card px-4 py-5 text-center',
         tone !== 'default' && 'before:absolute before:inset-x-0 before:top-0 before:h-1',
         toneRing[tone],
       )}
     >
-      <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+      <div className="flex items-center justify-center gap-1.5 text-[13px] font-medium text-foreground/80">
         <span className="truncate">{label}</span>
         {kpi.hint && (
           <TooltipProvider delayDuration={150}>
@@ -58,8 +58,8 @@ export function KpiTile({
           </TooltipProvider>
         )}
       </div>
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className="tabular text-[28px] font-semibold leading-none tracking-tight">{value}</span>
+      <div className="mt-2 flex items-baseline justify-center gap-2">
+        <span className="tabular font-display text-[30px] font-bold leading-none tracking-tight">{value}</span>
         {change != null && change !== 0 && (
           <span
             className={cn(
@@ -79,5 +79,10 @@ export function KpiTile({
 }
 
 export function KpiRow({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">{children}</div>;
+  // One card split by hairlines (the 1px gaps show the border colour through).
+  return (
+    <div className="overflow-hidden rounded-2xl border border-primary/25 bg-border">
+      <div className="grid grid-cols-2 gap-px md:grid-cols-3 xl:grid-cols-6">{children}</div>
+    </div>
+  );
 }

@@ -3,34 +3,35 @@
 @tailwind utilities;
 
 /*
- * Tokens. UI colours follow the Jobs Duniya brand (violet primary, Inter,
- * 0.75rem radius). Chart colours follow the validated data-viz palette:
+ * Tokens. Clean white canvas, hairline borders, no card shadows, one brand
+ * accent (Whitecarrot violet #5138EE), Inter for text and Outfit for display.
+ * 1rem radius. Chart colours follow the validated data-viz palette:
  * one brand hue for single-series charts, fixed-order categorical slots for
  * multi-series, a one-hue ordinal ramp for age buckets, and a reserved
  * status palette that is only ever used for status (always with a label).
  */
 @layer base {
   :root {
-    --background: 60 14% 97%;
-    --foreground: 0 0% 4%;
+    --background: 0 0% 100%;
+    --foreground: 240 10% 4%;
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 4%;
+    --card-foreground: 240 10% 4%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 4%;
-    --primary: 260 100% 57%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 260 100% 98%;
-    --secondary-foreground: 260 100% 9%;
-    --muted: 60 6% 93%;
-    --muted-foreground: 40 2% 33%;
-    --accent: 260 60% 96%;
-    --accent-foreground: 260 60% 20%;
+    --popover-foreground: 240 10% 4%;
+    --primary: 248 84% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 248 90% 98%;
+    --secondary-foreground: 248 60% 20%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 44%;
+    --accent: 248 100% 97%;
+    --accent-foreground: 248 70% 45%;
     --destructive: 0 62% 52%;
     --destructive-foreground: 0 0% 98%;
-    --border: 50 9% 87%;
-    --input: 50 9% 85%;
-    --ring: 260 100% 57%;
-    --radius: 0.75rem;
+    --border: 240 6% 90%;
+    --input: 240 6% 87%;
+    --ring: 248 84% 58%;
+    --radius: 1rem;
 
     --sidebar: 0 0% 100%;
 
@@ -39,8 +40,8 @@
     --viz-axis: #898781;
     --viz-track: #f0efec;
     /* single-series brand hue */
-    --viz-brand: #6250d6;
-    --viz-brand-soft: rgba(98, 80, 214, 0.14);
+    --viz-brand: #5138ee;
+    --viz-brand-soft: rgba(81, 56, 238, 0.12);
     /* categorical, fixed order */
     --series-1: #2a78d6;
     --series-2: #eb6834;
@@ -67,7 +68,7 @@
     --card-foreground: 40 10% 93%;
     --popover: 60 2% 10%;
     --popover-foreground: 40 10% 93%;
-    --primary: 254 85% 72%;
+    --primary: 248 90% 74%;
     --primary-foreground: 0 0% 6%;
     --secondary: 60 2% 15%;
     --secondary-foreground: 40 10% 93%;
@@ -79,7 +80,7 @@
     --destructive-foreground: 0 0% 98%;
     --border: 60 2% 17%;
     --input: 60 2% 20%;
-    --ring: 254 85% 72%;
+    --ring: 248 90% 74%;
 
     --sidebar: 60 2% 8%;
 

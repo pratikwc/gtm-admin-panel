@@ -152,7 +152,7 @@ export default async function OutboundPage({ searchParams }: { searchParams: Pro
         </Panel>
       </div>
 
-      <section id="table" className="mt-6 scroll-mt-24 rounded-xl border bg-card shadow-sm">
+      <section id="table" className="mt-6 scroll-mt-24 rounded-2xl border bg-card">
         <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
           <div className="flex rounded-lg bg-muted p-1 text-sm">
             {(['jobs', 'companies'] as const).map(t => (

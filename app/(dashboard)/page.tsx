@@ -81,7 +81,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
                       <span className="font-medium uppercase tracking-wider">{i + 1}. {s.label}</span>
                       <ChevronRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
                     </div>
-                    <div className="tabular mt-2 text-2xl font-semibold tracking-tight">{fmtInt(s.value)}</div>
+                    <div className="tabular mt-2 font-display text-[30px] font-bold leading-none tracking-tight">{fmtInt(s.value)}</div>
                     <div className="mt-1 text-xs text-muted-foreground">{s.hint}</div>
                     <div className="tabular mt-auto pt-3 text-[11px] text-muted-foreground">
                       {conv != null && prev ? `${fmtPct(conv, conv < 0.1 ? 1 : 0)} of ${prev.label.toLowerCase()}` : 'Starting point'}
@@ -109,7 +109,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
                     <span className="font-medium uppercase tracking-wider">{i + 1}. {s.label}</span>
                     <ChevronRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
                   </div>
-                  <div className="tabular mt-2 text-2xl font-semibold tracking-tight">{fmtInt(s.value)}</div>
+                  <div className="tabular mt-2 font-display text-[30px] font-bold leading-none tracking-tight">{fmtInt(s.value)}</div>
                   <div className="mt-1 text-xs text-muted-foreground">{s.hint}</div>
                   <div className="mt-auto pt-3">
                     {i < 5 ? (
@@ -175,7 +175,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         {SECTIONS.map(s => {
           const Icon = s.icon;
           return (
-            <Link key={s.href} href={`${s.href}${keep}`} className="group rounded-xl border bg-card p-5 shadow-sm transition-colors hover:border-primary/50">
+            <Link key={s.href} href={`${s.href}${keep}`} className="group rounded-2xl border bg-card p-6 transition-colors hover:border-primary/50">
               <Icon className="h-5 w-5 text-primary" />
               <div className="mt-3 font-semibold">{s.label}</div>
               <p className="mt-1 text-sm text-muted-foreground">{s.description}</p>

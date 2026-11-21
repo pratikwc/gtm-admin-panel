@@ -81,9 +81,9 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
         </Panel>
       </div>
 
-      <section id="table" className="mt-6 scroll-mt-24 rounded-xl border bg-card shadow-sm">
+      <section id="table" className="mt-6 scroll-mt-24 rounded-2xl border bg-card">
         <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
-          <h2 className="text-[15px] font-semibold">Applicants</h2>
+          <h2 className="font-display text-xl font-medium tracking-tight">Applicants</h2>
           <SearchBox placeholder="Search name, email or role" />
           <div className="ml-auto"><ExportButton dataset="applications" /></div>
         </div>

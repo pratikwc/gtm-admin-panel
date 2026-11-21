@@ -151,9 +151,9 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
         </Panel>
       </div>
 
-      <section id="table" className="mt-6 scroll-mt-24 rounded-xl border bg-card shadow-sm">
+      <section id="table" className="mt-6 scroll-mt-24 rounded-2xl border bg-card">
         <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
-          <h2 className="text-[15px] font-semibold">Companies</h2>
+          <h2 className="font-display text-xl font-medium tracking-tight">Companies</h2>
           <span className="tabular text-sm text-muted-foreground">{fmtInt(rows.length)}</span>
           <SearchBox placeholder="Search company or domain" />
           {extra.source && <ClearChip href={tableHref({ source: null })}>Source: {extra.source}</ClearChip>}
@@ -234,7 +234,7 @@ function FunnelHero({
   }[weakest.key];
 
   return (
-    <section className="rounded-xl border bg-card shadow-sm">
+    <section className="rounded-2xl border bg-card">
       <ol className="grid divide-y md:grid-cols-4 md:divide-x md:divide-y-0">
         {steps.map((s, i) => {
           const isActive = active === s.key;

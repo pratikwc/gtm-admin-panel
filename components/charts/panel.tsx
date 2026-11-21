@@ -16,15 +16,15 @@ export function Panel({
   bodyClassName?: string;
 }) {
   return (
-    <section className={cn('flex min-w-0 flex-col rounded-xl border bg-card shadow-sm', className)}>
-      <header className="flex items-start justify-between gap-3 px-5 pb-3 pt-4">
+    <section className={cn('flex min-w-0 flex-col rounded-2xl border bg-card', className)}>
+      <header className="flex items-start justify-between gap-3 px-6 pb-4 pt-5">
         <div className="min-w-0">
-          <h2 className="text-[15px] font-semibold leading-tight">{title}</h2>
-          {description && <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>}
+          <h2 className="font-display text-xl font-medium leading-tight tracking-tight">{title}</h2>
+          {description && <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{description}</p>}
         </div>
         {action}
       </header>
-      <div className={cn('flex-1 px-5 pb-5', bodyClassName)}>{children}</div>
+      <div className={cn('flex-1 px-6 pb-6', bodyClassName)}>{children}</div>
     </section>
   );
 }
@@ -33,7 +33,7 @@ export function SectionHeader({ title, description, children }: { title: string;
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="font-display text-[32px] font-bold leading-tight tracking-tight">{title}</h1>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
       </div>
       {children}
