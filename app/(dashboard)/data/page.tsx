@@ -39,6 +39,8 @@ const STEP_TONE: Record<FunnelKey, ChipTone> = { data: 'neutral', researched: 'i
 const STATUS_LABEL = Object.fromEntries(FUNNEL.map(s => [s.key, s.status])) as Record<FunnelKey, string>;
 const STAGE_LABEL: Record<string, string> = Object.fromEntries(LIFECYCLE.map(s => [s.key, s.label]));
 const MUTED = ['Other', UNKNOWN_COUNTRY, NOT_SET, 'Unclassified'];
+const PERIOD: Record<string, string> = { '7d': 'the last 7 days', '30d': 'the last 30 days', '90d': 'the last 90 days' };
+
 
 export default async function DataSpacePage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const sp = await searchParams;
@@ -56,7 +58,11 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
   const header = (
     <SectionHeader
       title="Data space"
-      description="How much data we have, how much of it is researched, who we emailed, who replied, who replied positively, and who became an Opportunity. Email only for now. Counts are where things stand today."
+      description={
+        f.from
+          ? `What happened in ${PERIOD[f.range]}: companies added, researched, emailed, replied, replied positively, and became an Opportunity (email only). Choose All time for today's totals.`
+          : 'Where things stand today: how much data we have, how much is researched, who we emailed, who replied, who replied positively, and who became an Opportunity (email only).'
+      }
     >
       {'error' in ds ? null : <DataAsOf at={ds.fetchedAt} />}
     </SectionHeader>
@@ -80,6 +86,7 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
         addedPrev={ds.addedPrev}
         hrefFor={step => tableHref({ step: extra.step === step ? null : step })}
         active={extra.step}
+        period={f.from ? PERIOD[f.range] : null}
       />
 
       <Panel
@@ -128,7 +135,7 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
         >
           <TrendChart data={ds.growth} grain={f.days && f.days <= 90 ? 'day' : 'week'} from={f.from?.toISOString() ?? null} label="New companies" height={200} />
         </Panel>
-        <Panel title="Supabase → HubSpot" description="Companies our job scan found in Supabase, and how many have reached HubSpot.">
+        <Panel title="Supabase → HubSpot" scope={f.from || f.market ? (f.market ? "Now · all markets" : "Now") : null} description="Companies our job scan found in Supabase, and how many have reached HubSpot.">
           {sync ? (
             <div className="space-y-4">
               <div>
@@ -215,7 +222,7 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
 
 /** The four steps side by side, each bar sized against all data, plus the one sentence that matters. */
 function FunnelHero({
-  totals, contacts, added, addedPrev, hrefFor, active,
+  totals, contacts, added, addedPrev, hrefFor, active, period,
 }: {
   totals: FunnelRow;
   contacts: number | null;
@@ -223,11 +230,16 @@ function FunnelHero({
   addedPrev: number | null;
   hrefFor: (step: FunnelKey) => string;
   active: string | null;
+  /** Set when a date range is chosen: counts are activity in that period, not today's totals. */
+  period: string | null;
 }) {
+  const max = Math.max(...FUNNEL.map(s => totals[s.key]), 1);
   const steps = FUNNEL.map((s, i) => {
     const value = totals[s.key];
     const prev = i > 0 ? FUNNEL[i - 1] : null;
-    return { ...s, value, prev, stepRate: prev ? rate(value, totals[prev.key]) : null, share: rate(value, totals.data) };
+    const r = prev ? rate(value, totals[prev.key]) : null;
+    // In a period the steps are separate activities, so a rate over 100% means nothing: hide it.
+    return { ...s, value, prev, stepRate: r != null && r <= 1 ? r : null, share: rate(value, totals.data), bar: value / max };
   });
 
   // The weakest hand-off is the message: that's where effort pays off most.
@@ -241,6 +253,7 @@ function FunnelHero({
     positive: `Only ${fmtInt(weakest.value)} of ${fmtInt(totals.replied)} replies were positive. Reply quality is the biggest gap.`,
     opportunity: `${fmtInt(stuck)} positive replies haven't become an Opportunity yet. Following them up is the biggest gap.`,
   }[weakest.key];
+  const showMessage = !period && message;
 
   return (
     <section className="overflow-hidden rounded-2xl border bg-border">
@@ -267,30 +280,34 @@ function FunnelHero({
                 <span className="tabular mt-3 font-display text-[34px] font-bold leading-none tracking-tight">{fmtInt(s.value)}</span>
                 <span className="mt-1 text-sm text-muted-foreground">
                   {s.key === 'data' ? (
+                    period ? <>companies added</> : <>companies{contacts != null && <> · {fmtInt(contacts)} contacts</>}</>
+                  ) : s.stepRate != null ? (
                     <>
-                      companies{contacts != null && <> · {fmtInt(contacts)} contacts</>}
+                      <span className="tabular font-medium text-foreground">{fmtPct(s.stepRate, s.stepRate < 0.1 ? 1 : 0)}</span> of {s.prev!.label.toLowerCase()}
                     </>
                   ) : (
-                    <>
-                      <span className="tabular font-medium text-foreground">{fmtPct(s.stepRate, (s.stepRate ?? 1) < 0.1 ? 1 : 0)}</span> of {s.prev!.label.toLowerCase()}
-                    </>
+                    <>in the period</>
                   )}
                 </span>
                 <span className="mt-4 h-2 w-full overflow-hidden rounded-full bg-[var(--viz-track)]">
                   <span
                     className="block h-2 rounded-full"
-                    style={{ width: `${Math.max((s.share ?? 0) * 100, s.value ? 1.5 : 0)}%`, background: s.key === 'data' ? 'var(--viz-brand)' : STEP_COLOR[s.key] }}
+                    style={{ width: `${Math.max(s.bar * 100, s.value ? 1.5 : 0)}%`, background: s.key === 'data' ? 'var(--viz-brand)' : STEP_COLOR[s.key] }}
                   />
                 </span>
                 <span className="tabular mt-1.5 text-[11px] text-muted-foreground">
-                  {s.key === 'data' ? (added != null ? `+${fmtInt(added)} added this period${addedPrev ? ` (${added >= addedPrev ? '+' : ''}${fmtPct((added - addedPrev) / addedPrev)})` : ''}` : 'All data') : `${fmtPct(s.share, (s.share ?? 1) < 0.1 ? 1 : 0)} of all data`}
+                  {period
+                    ? s.key === 'data' && addedPrev
+                      ? `${added! >= addedPrev ? '+' : ''}${fmtPct((added! - addedPrev) / addedPrev)} vs the period before`
+                      : period
+                    : s.key === 'data' ? 'All time' : `${fmtPct(s.share, (s.share ?? 1) < 0.1 ? 1 : 0)} of all data`}
                 </span>
               </Link>
             </li>
           );
         })}
       </ol>
-      {message && (
+      {showMessage && (
         <p className="flex items-start gap-2 bg-card px-5 py-3 text-sm">
           <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <span>{message}</span>
@@ -369,7 +386,9 @@ function BreakdownTable({ rows, hrefFor }: { rows: FunnelRow[]; hrefFor: (r: Fun
 }
 
 function Cell({ value, of, good }: { value: number; of: number; good?: boolean }) {
-  const r = rate(value, of);
+  const r0 = rate(value, of);
+  // A step's activity in a period can outnumber the step before it: a share over 100% means nothing, so hide it.
+  const r = r0 != null && r0 <= 1 ? r0 : null;
   return (
     <TableCell className="tabular text-right text-sm">
       <span className={good && value > 0 ? 'font-medium text-[var(--status-good)]' : ''}>{fmtInt(value)}</span>

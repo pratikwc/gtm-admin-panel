@@ -82,6 +82,7 @@ export default async function PublishedPage({ searchParams }: { searchParams: Pr
         <Panel
           className="xl:col-span-3"
           title="Listing status"
+          scope={f.from ? 'Now' : null}
           description="Stored flag combined with the posting date. Click a status to filter the table."
         >
           <SegmentBar
@@ -96,7 +97,7 @@ export default async function PublishedPage({ searchParams }: { searchParams: Pr
             }))}
           />
         </Panel>
-        <Panel className="xl:col-span-2" title="GTM ↔ JD reconciliation" description="The two databases compared job by job.">
+        <Panel className="xl:col-span-2" title="GTM ↔ JD reconciliation" scope={f.from ? "Now" : null} description="The two databases compared job by job, today.">
           <ul className="divide-y text-sm">
             <ReconRow
               label="Live in GTM, not active on JD"
@@ -118,6 +119,7 @@ export default async function PublishedPage({ searchParams }: { searchParams: Pr
       <Panel
         className="mt-4"
         title="Active vs inactive by posting age"
+        scope={f.from ? 'Now' : null}
         description="Every job synced from GTM, by how long ago it was posted. Active jobs are shown on the site; inactive ones are hidden. Jobs posted ≤ 60 days ago should be active, older ones inactive."
       >
         <SplitTable
@@ -132,7 +134,7 @@ export default async function PublishedPage({ searchParams }: { searchParams: Pr
       </Panel>
 
       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <Panel title="By country" description="Parsed from the job location. Click to filter the page.">
+        <Panel title="By country" description={`Live listings${f.from ? ' posted in the period' : ''}, by country parsed from the job location. Click to filter the page.`}>
           <BarList
             items={s.countries}
             mutedLabels={['Other', 'Unclassified']}
@@ -145,7 +147,7 @@ export default async function PublishedPage({ searchParams }: { searchParams: Pr
         <Panel title="By industry" description="Industry of the hiring company.">
           <BarList items={s.industries} mutedLabels={['Unknown', 'Other']} />
         </Panel>
-        <Panel title="Top hiring companies" description="Most active listings.">
+        <Panel title="Top hiring companies" description={f.from ? 'Most live listings posted in the period.' : 'Most live listings.'}>
           <BarList items={s.topCompanies} color="var(--series-1)" total={s.kpis.active.value ?? undefined} />
         </Panel>
         <Panel title="By job type">

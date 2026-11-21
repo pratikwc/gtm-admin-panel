@@ -12,11 +12,11 @@ import type { Filters } from '../filters';
 const COMPANY_PROPS = [
   'name', 'domain', 'country', 'lifecyclestage', 'lead_sources', 'instantly_company_status',
   'instantly_last_contacted_at', 'instantly_any_contact_replied', 'wc_industry_bucket', 'company_priority_manual', 'createdate',
-  'hs_v2_date_entered_opportunity',
+  'hs_v2_date_entered_opportunity', 'research_brief_link', 'instantly_last_reply_at',
 ];
 const CONTACT_PROPS = [
   'country', 'associatedcompanyid', 'instantly_status', 'instantly_unsubscribed', 'instantly_campaign_name',
-  'instantly_email_account', 'instantly_last_email_sent_at',
+  'instantly_email_account', 'instantly_last_email_sent_at', 'instantly_last_replied_at',
 ];
 const OUTBOUND = 'Leads for outbound';
 
@@ -62,9 +62,16 @@ async function snapshot(): Promise<HubspotSnapshot> {
     hsPortalId(),
     positiveReplyCompanies(),
   ]);
-  const companies = dedupe(companyRecords).map(r => toCompanyRow(r.id, r.properties, positive));
+  const contacts0 = dedupe(contactRecords);
+  // Latest reply per company, from its contacts.
+  const replyAt = new Map<string, string>();
+  for (const c of contacts0) {
+    const id = c.properties.associatedcompanyid, at = c.properties.instantly_last_replied_at;
+    if (id && at && at > (replyAt.get(id) ?? '')) replyAt.set(id, at);
+  }
+  const companies = dedupe(companyRecords).map(r => toCompanyRow(r.id, r.properties, positive, replyAt.get(r.id)));
   const byId = new Map<string, CompanyRow>(companies.map(c => [c.id, c]));
-  const contacts = dedupe(contactRecords).map(r => toContactRow(r.properties, byId));
+  const contacts = contacts0.map(r => toContactRow(r.properties, byId));
   return { companies, contacts, outboundContacts, portalId };
 }
 
@@ -74,7 +81,7 @@ function dedupe(records: HsRecord[]) {
 }
 
 // Stored packed (shared value list + indices) to stay under Next's 2MB cache entry limit.
-const packedSnapshot = cached('hubspot-snapshot-v5', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
+const packedSnapshot = cached('hubspot-snapshot-v6', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
 
 export async function getHubspotSnapshot(): Promise<{ data: HubspotSnapshot; fetchedAt: string }> {
   const r = await packedSnapshot();

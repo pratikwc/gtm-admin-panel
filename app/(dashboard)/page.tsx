@@ -5,7 +5,7 @@ import { fmtAgo, fmtDate, fmtInt, fmtPct } from '@/lib/format';
 import { freshness, type Health } from '@/lib/health';
 import { getPipelineSnapshot } from '@/lib/queries/pipeline';
 import { getHubspotSnapshot, getSyncStatus } from '@/lib/queries/dataspace';
-import { funnelCounts } from '@/lib/marketing';
+import { funnelCounts, isoDay } from '@/lib/marketing';
 import { Panel, SectionHeader } from '@/components/charts/panel';
 import { StatusChip, type ChipTone } from '@/components/charts/status-chip';
 import { DataAsOf } from '@/components/shell/data-as-of';
@@ -21,13 +21,14 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
   const sp = await searchParams;
   const f = parseFilters(sp);
   const [{ data: p, fetchedAt }, hub, gtmSync] = await Promise.all([
-    getPipelineSnapshot(f.from?.toISOString() ?? null),
+    getPipelineSnapshot(f.from?.toISOString() ?? null, f.market),
     // Separate sources: if HubSpot or the research table is down, the rest of Overview still renders.
     getHubspotSnapshot().then(r => r.data).catch(() => null),
     getSyncStatus().then(r => r.data).catch(() => null),
   ]);
   const qs = new URLSearchParams();
   if (f.range !== '90d') qs.set('range', f.range);
+  if (f.market) qs.set('market', f.market);
   const keep = qs.size ? `?${qs}` : '';
   const top = Math.max(...p.funnel.slice(0, 5).map(s => s.value), 1);
   const syncAt = p.latestJdUpdate ?? p.lastSyncAt;
@@ -44,15 +45,23 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
     { label: 'New companies in HubSpot', detail: 'Newest target company created (Supabase sync and manual adds)', at: latest(hub?.companies, c => c.created), href: '/data' },
   ];
 
-  const fc = hub ? funnelCounts(hub.companies) : null;
+  // Activity in the period when a range is chosen; today's totals for All time.
+  const from = f.from ? isoDay(f.from) : null;
+  const fc = hub ? funnelCounts(f.market ? hub.companies.filter(c => c.market === f.market) : hub.companies, from) : null;
+  const fq = new URLSearchParams(qs);
+  const link = (path: string, step?: string) => {
+    const q = new URLSearchParams(fq);
+    if (step) q.set('step', step);
+    return `${path}${q.size ? `?${q}` : ''}${step ? '#table' : ''}`;
+  };
   const marketing = fc
     ? [
-        { key: 'data', label: 'Data', value: fc.data, hint: 'Target companies in HubSpot', href: '/data' },
-        { key: 'researched', label: 'Researched', value: fc.researched, hint: 'Company research done', href: '/data?step=researched#table' },
-        { key: 'reached', label: 'Reached out', value: fc.reached, hint: 'At least one contact emailed', href: '/reached' },
-        { key: 'replied', label: 'Replied', value: fc.replied, hint: 'A contact replied to our email (any reply)', href: '/data?step=replied#table' },
-        { key: 'positive', label: 'Positive reply', value: fc.positive, hint: 'Interested or meeting booked in Instantly', href: '/data?step=positive#table' },
-        { key: 'opportunity', label: 'Opportunity', value: fc.opportunity, hint: 'Positive reply that became an Opportunity (email only)', href: '/data?step=opportunity#table' },
+        { key: 'data', label: 'Data', value: fc.data, hint: from ? 'Target companies added to HubSpot' : 'Target companies in HubSpot', href: link('/data') },
+        { key: 'researched', label: 'Researched', value: fc.researched, hint: from ? 'Company research done in the period' : 'Company research done', href: link('/data', 'researched') },
+        { key: 'reached', label: 'Reached out', value: fc.reached, hint: from ? 'First emailed in the period' : 'At least one contact emailed', href: link('/reached') },
+        { key: 'replied', label: 'Replied', value: fc.replied, hint: 'A contact replied to our email (any reply)', href: link('/data', 'replied') },
+        { key: 'positive', label: 'Positive reply', value: fc.positive, hint: 'Interested or meeting booked in Instantly', href: link('/data', 'positive') },
+        { key: 'opportunity', label: 'Opportunity', value: fc.opportunity, hint: 'Positive reply that became an Opportunity (email only)', href: link('/data', 'opportunity') },
       ]
     : null;
 
@@ -68,11 +77,20 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       <JdApiBanner />
 
       {marketing && (
-        <Panel className="mb-4" title="Marketing funnel" description="From data to opportunity through outbound email: how much data we have, how much is researched, who we emailed, who replied, who replied positively, and who became an Opportunity. Click a step to open it.">
+        <Panel
+          className="mb-4"
+          title="Marketing funnel"
+          description={
+            from
+              ? 'What happened in the period, through outbound email: companies added, researched, emailed, replied, replied positively, and became an Opportunity. Click a step to open it.'
+              : 'From data to opportunity through outbound email: how much data we have, how much is researched, who we emailed, who replied, who replied positively, and who became an Opportunity. Click a step to open it.'
+          }
+        >
           <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
             {marketing.map((s, i) => {
               const prev = i === 0 ? null : marketing[i - 1];
-              const conv = prev?.value ? s.value / prev.value : null;
+              const c0 = prev?.value ? s.value / prev.value : null;
+              const conv = c0 != null && c0 <= 1 ? c0 : null; // over 100% can happen in a period: hide it
               return (
                 <li key={s.key}>
                   <Link href={s.href} className="group flex h-full flex-col rounded-lg border bg-background/50 p-4 transition-colors hover:border-primary/50 hover:bg-accent/40">
@@ -83,7 +101,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
                     <div className="tabular mt-2 font-display text-[30px] font-bold leading-none tracking-tight">{fmtInt(s.value)}</div>
                     <div className="mt-1 text-xs text-muted-foreground">{s.hint}</div>
                     <div className="tabular mt-auto pt-3 text-[11px] text-muted-foreground">
-                      {conv != null && prev ? `${fmtPct(conv, conv < 0.1 ? 1 : 0)} of ${prev.label.toLowerCase()}` : 'Starting point'}
+                      {conv != null && prev ? `${fmtPct(conv, conv < 0.1 ? 1 : 0)} of ${prev.label.toLowerCase()}` : i === 0 ? 'Starting point' : 'In the period'}
                     </div>
                   </Link>
                 </li>
@@ -97,7 +115,8 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
           {p.funnel.map((s, i) => {
             const base = s.of ? p.funnel.find(x => x.key === s.of) : null;
-            const conv = base?.value ? s.value / base.value : null;
+            const c0 = base?.value ? s.value / base.value : null;
+            const conv = c0 != null && c0 <= 1 ? c0 : null;
             return (
               <li key={s.key}>
                 <Link href={`${s.href}${s.href.includes('?') ? (keep ? `&${keep.slice(1)}` : '') : keep}`}
@@ -128,7 +147,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       </Panel>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Panel title="Pipeline health" description="When each automated step last produced data. Green under 26h, amber under 3 days, red beyond.">
+        <Panel title="Pipeline health" scope={f.from || f.market ? 'Now' : null} description="When each automated step last produced data. Green under 26h, amber under 3 days, red beyond.">
           <ul className="divide-y">
             {health.map(h => {
               const s = freshness(h.at);
@@ -147,7 +166,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
             })}
           </ul>
         </Panel>
-        <Panel title="GTM ↔ JD drift" description="Jobs where the two databases disagree.">
+        <Panel title="GTM ↔ JD drift" scope={f.from ? 'Now' : null} description="Jobs where the two databases disagree, today.">
           <div className="grid gap-3 sm:grid-cols-2">
             <DriftTile
               value={p.drift.gtmLiveMissingInJd}

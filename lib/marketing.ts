@@ -184,6 +184,9 @@ export interface CompanyRow {
   contacted: string | null; // yyyy-mm-dd, last Instantly contact
   /** Email outcome beyond a reply: 0 none, 1 positive Instantly reply, 2 positive reply and then an Opportunity. */
   win: 0 | 1 | 2;
+  researchedAt: string | null; // yyyy-mm-dd, from the research brief's file name
+  repliedAt: string | null; // yyyy-mm-dd, latest reply from any contact
+  oppAt: string | null; // yyyy-mm-dd, first became an Opportunity
 }
 
 /** One contact we've emailed (has Instantly activity in HubSpot). */
@@ -212,8 +215,20 @@ const day = (v: string | null | undefined) => (v ? v.slice(0, 10) : null);
 const wasOpportunity = (p: Props) =>
   !!p.hs_v2_date_entered_opportunity || ['opportunity', 'customer'].includes(lifecycleKey(p.lifecyclestage));
 
-/** `positive`: HubSpot ids of companies with a contact who replied positively in Instantly. */
-export function toCompanyRow(id: string, p: Props, positive?: Set<string>): CompanyRow {
+/** Research briefs are saved as `YYYY-MM-DD_HH-MM_<company>_brief.md`; the date is when research was done. */
+export function researchDate(link: string | null | undefined): string | null {
+  const m = /(\d{4}-\d{2}-\d{2})_[^/]*$/.exec(link ?? '');
+  return m ? m[1] : null;
+}
+
+const latestDay = (...vs: (string | null | undefined)[]) =>
+  vs.map(day).filter((v): v is string => !!v).sort().pop() ?? null;
+
+/**
+ * `positive`: HubSpot ids of companies with a contact who replied positively in Instantly.
+ * `contactReplyAt`: latest reply date across the company's contacts (the company field is often empty).
+ */
+export function toCompanyRow(id: string, p: Props, positive?: Set<string>, contactReplyAt?: string | null): CompanyRow {
   return {
     id,
     name: (p.name ?? '').slice(0, 80) || p.domain || `Company ${id}`,
@@ -228,6 +243,9 @@ export function toCompanyRow(id: string, p: Props, positive?: Set<string>): Comp
     created: day(p.createdate),
     contacted: day(p.instantly_last_contacted_at),
     win: positive?.has(id) ? (wasOpportunity(p) ? 2 : 1) : 0,
+    researchedAt: researchDate(p.research_brief_link),
+    repliedAt: latestDay(p.instantly_last_reply_at, contactReplyAt),
+    oppAt: day(p.hs_v2_date_entered_opportunity),
   };
 }
 
@@ -288,29 +306,46 @@ export interface FunnelRow {
   opportunity: number;
 }
 
-/** Cumulative step counts: a company that replied also counts as researched and reached, and so on. */
-export function funnelCounts(rows: CompanyRow[]): FunnelRow {
+/** When each step happened for a company (positive reply has no date of its own, so it uses the reply date). */
+const STEP_DATE: Record<FunnelKey, (c: CompanyRow) => string | null> = {
+  data: c => c.created,
+  researched: c => c.researchedAt,
+  reached: c => c.contacted,
+  replied: c => c.repliedAt,
+  positive: c => c.repliedAt,
+  opportunity: c => c.oppAt,
+};
+
+/**
+ * Has the company got to `step`? With `from`, only if that step happened in the period
+ * (activity in period: added, researched, emailed, replied, became an Opportunity since `from`).
+ */
+export function atStep(c: CompanyRow, step: FunnelKey, from: string | null = null): boolean {
+  if (STEP_RANK[funnelStep(c)] < STEP_RANK[step]) return false;
+  return !from || inRange(STEP_DATE[step](c), from);
+}
+
+/** Did anything happen to the company in the period? */
+export const activeSince = (c: CompanyRow, from: string | null) => !from || FUNNEL.some(s => atStep(c, s.key, from));
+
+/**
+ * Step counts. All time (`from` null): cumulative, where things stand today. With `from`: activity in the period,
+ * each step counting the companies whose step happened since `from`.
+ */
+export function funnelCounts(rows: CompanyRow[], from: string | null = null): FunnelRow {
   const r: FunnelRow = { label: 'All', data: 0, researched: 0, reached: 0, replied: 0, positive: 0, opportunity: 0 };
-  for (const c of rows) {
-    const k = STEP_RANK[funnelStep(c)];
-    r.data++;
-    if (k >= 1) r.researched++;
-    if (k >= 2) r.reached++;
-    if (k >= 3) r.replied++;
-    if (k >= 4) r.positive++;
-    if (k >= 5) r.opportunity++;
-  }
+  for (const c of rows) for (const s of FUNNEL) if (atStep(c, s.key, from)) r[s.key]++;
   return r;
 }
 
-function funnelRows(rows: CompanyRow[], key: (c: CompanyRow) => string | string[], last: string[]): FunnelRow[] {
+function funnelRows(rows: CompanyRow[], key: (c: CompanyRow) => string | string[], last: string[], from: string | null): FunnelRow[] {
   const groups = new Map<string, CompanyRow[]>();
   for (const c of rows) {
     const k = key(c);
     for (const one of Array.isArray(k) ? k : [k]) groups.set(one, [...(groups.get(one) ?? []), c]);
   }
   return [...groups.entries()]
-    .map(([label, g]) => ({ ...funnelCounts(g), label }))
+    .map(([label, g]) => ({ ...funnelCounts(g, from), label }))
     .sort((a, b) => Number(last.includes(a.label)) - Number(last.includes(b.label)) || b.data - a.data);
 }
 
@@ -336,12 +371,12 @@ export type BreakdownKey = (typeof BREAKDOWNS)[number]['key'];
 
 export function dataSpace(s: HubspotSnapshot, f: DataSpaceFilters) {
   const rows = f.market ? s.companies.filter(c => c.market === f.market) : s.companies;
-  const totals = funnelCounts(rows);
+  const totals = funnelCounts(rows, f.from);
   const added = f.from ? rows.filter(c => inRange(c.created, f.from)).length : null;
   const addedPrev = f.from ? rows.filter(c => inRange(c.created, f.prevFrom, f.from)).length : null;
 
   const table = rows
-    .filter(c => (!f.step || funnelStep(c) === f.step) && (!f.source || c.sources.includes(f.source)))
+    .filter(c => (f.step ? atStep(c, f.step as FunnelKey, f.from) : activeSince(c, f.from)) && (!f.source || c.sources.includes(f.source)))
     .filter(c => !f.q || c.name.toLowerCase().includes(f.q.toLowerCase()) || (c.domain ?? '').toLowerCase().includes(f.q.toLowerCase()))
     .sort((a, b) => (b.created ?? '').localeCompare(a.created ?? ''));
 
@@ -352,10 +387,10 @@ export function dataSpace(s: HubspotSnapshot, f: DataSpaceFilters) {
     added,
     addedPrev,
     breakdown: {
-      market: funnelRows(rows, c => c.market, ['Other', UNKNOWN_COUNTRY]),
-      source: funnelRows(rows, c => c.sources, [NOT_SET]),
-      industry: funnelRows(rows, c => c.industry, ['Other', NOT_SET]),
-      priority: funnelRows(rows, c => c.priority, ['Unclassified', NOT_SET]),
+      market: funnelRows(rows, c => c.market, ['Other', UNKNOWN_COUNTRY], f.from),
+      source: funnelRows(rows, c => c.sources, [NOT_SET], f.from),
+      industry: funnelRows(rows, c => c.industry, ['Other', NOT_SET], f.from),
+      priority: funnelRows(rows, c => c.priority, ['Unclassified', NOT_SET], f.from),
     } satisfies Record<BreakdownKey, FunnelRow[]>,
     growth: trend(rows.filter(c => c.created && inRange(c.created, f.from)).map(c => ({ t: c.created!, value: 1 })), f.grain),
     table,
@@ -390,7 +425,9 @@ export function emailAudience(s: HubspotSnapshot, f: { market: string | null; fr
   const contacts = s.contacts.filter(c => (!f.market || c.market === f.market) && (!f.from || inRange(c.lastSent, f.from)));
   return {
     targetCompanies: companies.length,
-    reachedCompanies: companies.filter(isReached).length,
+    // In a period: companies first emailed in it. All time: every company emailed so far.
+    reachedCompanies: companies.filter(c => atStep(c, 'reached', f.from)).length,
+    reachedAllTime: companies.filter(isReached).length,
     contacts: contacts.length,
     replied: contacts.filter(c => c.outcome === 'replied').length,
     outcome: ordered(count(contacts, c => c.outcome), OUTCOME),
@@ -433,7 +470,7 @@ export function packSnapshot(s: HubspotSnapshot): PackedSnapshot {
     v: 1,
     dict,
     companies: s.companies.map(c => [
-      c.id, c.name, c.domain, d(c.market), d(c.stage), c.sources.map(d), d(c.outreach), d(c.industry), d(c.priority), c.created, c.contacted, c.win,
+      c.id, c.name, c.domain, d(c.market), d(c.stage), c.sources.map(d), d(c.outreach), d(c.industry), d(c.priority), c.created, c.contacted, c.win, c.researchedAt, c.repliedAt, c.oppAt,
     ]),
     contacts: s.contacts.map(c => [
       d(c.market), d(c.outcome), d(c.campaign), d(c.mailbox), c.lastSent, d(c.industry), d(c.priority), c.companyId,
@@ -459,6 +496,9 @@ export function unpackSnapshot(p: PackedSnapshot): HubspotSnapshot {
       created: r[9] as string | null,
       contacted: r[10] as string | null,
       win: ((r[11] as number | undefined) ?? 0) as 0 | 1 | 2,
+      researchedAt: (r[12] as string | null | undefined) ?? null,
+      repliedAt: (r[13] as string | null | undefined) ?? null,
+      oppAt: (r[14] as string | null | undefined) ?? null,
     })),
     contacts: p.contacts.map(r => ({
       market: w(r[0]),

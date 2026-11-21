@@ -55,6 +55,7 @@ export default async function OutboundEmailPage({ searchParams }: { searchParams
   const aud = 'error' in hub ? null : emailAudience(hub.data, { market: f.market, from: f.from ? isoDay(f.from) : null });
   const groupFilter = f.status && CAMPAIGN_GROUPS.some(g => g.key === f.status) ? (f.status as CampaignGroup) : null;
   const campaigns = em ? em.campaigns.filter(c => !groupFilter || c.group === groupFilter) : [];
+  const allMarkets = marketLabel ? 'All markets' : null; // Instantly has no country, so these ignore the market filter
   const fetchedAt = 'error' in email ? ('error' in hub ? null : hub.fetchedAt) : email.fetchedAt;
 
   return (
@@ -81,13 +82,16 @@ export default async function OutboundEmailPage({ searchParams }: { searchParams
         <KpiTile label="Opportunities" kpi={em?.kpis.opportunities ?? { value: null }} />
         <KpiTile
           label="Companies reached"
-          kpi={{ value: aud?.reachedCompanies ?? null, hint: 'Target companies in HubSpot with at least one contact emailed (all time).' }}
+          kpi={{
+            value: aud?.reachedCompanies ?? null,
+            hint: f.from ? 'Target companies in HubSpot last emailed in the period.' : 'Target companies in HubSpot with at least one contact emailed.',
+          }}
           footer={aud ? `${fmtPct(rate(aud.reachedCompanies, aud.targetCompanies), 1)} of ${fmtInt(aud.targetCompanies)} target` : undefined}
         />
       </KpiRow>
       {marketLabel && em && (
         <p className="mt-2 text-xs text-muted-foreground">
-          Instantly reports totals for all markets. The market filter ({marketLabel}) applies to the region, audience and coverage panels below.
+          Instantly has no country data, so emails sent, people reached, reply, bounce and opportunities are for all markets. The market filter ({marketLabel}) applies to companies reached and to the coverage, market, industry and outcome panels.
         </p>
       )}
 
@@ -95,7 +99,7 @@ export default async function OutboundEmailPage({ searchParams }: { searchParams
         <Panel
           className="xl:col-span-2"
           title="Coverage"
-          description="Share of our target companies we have emailed so far."
+          description={f.from ? 'Target companies emailed in the period, and how much of our list we have covered so far.' : 'Share of our target companies we have emailed so far.'}
           action={
             <Link href={hrefWith('/data', sp, { status: null })} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary hover:underline">
               Data space <ArrowRight className="h-3 w-3" />
@@ -106,20 +110,35 @@ export default async function OutboundEmailPage({ searchParams }: { searchParams
             <div>
               <div className="flex items-baseline gap-2">
                 <span className="tabular text-3xl font-semibold tracking-tight">{fmtInt(aud.reachedCompanies)}</span>
-                <span className="text-sm text-muted-foreground">of {fmtInt(aud.targetCompanies)} target companies</span>
+                <span className="text-sm text-muted-foreground">
+                  {f.from ? 'companies emailed in the period' : `of ${fmtInt(aud.targetCompanies)} target companies`}
+                </span>
               </div>
-              <div className="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-[var(--viz-track)]">
-                <div className="h-2.5 rounded-full bg-[var(--viz-brand)]" style={{ width: `${Math.max(1, (rate(aud.reachedCompanies, aud.targetCompanies) ?? 0) * 100)}%` }} />
+              <div className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-[var(--viz-track)]">
+                {f.from && (
+                  <div className="h-2.5 bg-[var(--viz-brand)]" style={{ width: `${(rate(aud.reachedCompanies, aud.targetCompanies) ?? 0) * 100}%` }} title="Emailed in the period" />
+                )}
+                <div
+                  className={f.from ? 'h-2.5 bg-[var(--viz-brand)] opacity-35' : 'h-2.5 rounded-full bg-[var(--viz-brand)]'}
+                  style={{ width: `${Math.max(1, (rate(f.from ? aud.reachedAllTime - aud.reachedCompanies : aud.reachedAllTime, aud.targetCompanies) ?? 0) * 100)}%` }}
+                  title="Emailed before"
+                />
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                {fmtInt(aud.targetCompanies - aud.reachedCompanies)} target companies have not been emailed yet.
+                {fmtInt(aud.reachedAllTime)} of {fmtInt(aud.targetCompanies)} target companies emailed so far ({fmtPct(rate(aud.reachedAllTime, aud.targetCompanies), 1)}).{' '}
+                {fmtInt(aud.targetCompanies - aud.reachedAllTime)} have not been emailed yet.
               </p>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Needs HubSpot.</p>
           )}
         </Panel>
-        <Panel className="xl:col-span-3" title="Campaigns by status" description="Instantly campaign status. Click a status to filter the campaign list.">
+        <Panel
+          className="xl:col-span-3"
+          title="Campaigns by status"
+          scope={f.from || marketLabel ? 'Now' : null}
+          description="Each campaign's status today in Instantly (status has no history, so the date range doesn't change it). Click a status to filter the campaign list."
+        >
           {em ? (
             <SegmentBar
               segments={CAMPAIGN_GROUPS.map(g => ({
@@ -140,10 +159,10 @@ export default async function OutboundEmailPage({ searchParams }: { searchParams
 
       {em && (
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <Panel title="Emails sent" description={`All campaigns, per ${em.grain}.`}>
+          <Panel title="Emails sent" scope={allMarkets} description={`All campaigns, per ${em.grain}.`}>
             <TrendChart data={em.sentTrend} grain={em.grain} from={f.from?.toISOString() ?? null} label="Emails sent" height={190} />
           </Panel>
-          <Panel title="Replies" description={`Unique human replies, per ${em.grain}.`}>
+          <Panel title="Replies" scope={allMarkets} description={`Unique human replies, per ${em.grain}.`}>
             <TrendChart data={em.replyTrend} grain={em.grain} from={f.from?.toISOString() ?? null} label="Replies" height={190} />
           </Panel>
         </div>
@@ -208,6 +227,7 @@ export default async function OutboundEmailPage({ searchParams }: { searchParams
         <section id="campaigns" className="mt-6 scroll-mt-24 rounded-2xl border bg-card">
           <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
             <h2 className="font-display text-xl font-medium tracking-tight">Campaigns</h2>
+            {allMarkets && <span className="rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{allMarkets}</span>}
             <span className="tabular text-sm text-muted-foreground">{fmtInt(campaigns.length)}</span>
             <div className="ml-auto">
               <ExportButton dataset="email-campaigns" />

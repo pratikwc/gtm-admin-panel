@@ -83,6 +83,7 @@ export default async function OutboundPage({ searchParams }: { searchParams: Pro
         <Panel
           className="xl:col-span-3"
           title="Job status"
+          scope={f.from ? 'Now' : null}
           description="Based on when the scraper last saw the job on LinkedIn. Click a bucket to filter the table."
         >
           <SegmentBar
@@ -105,6 +106,7 @@ export default async function OutboundPage({ searchParams }: { searchParams: Pro
       <Panel
         className="mt-4"
         title="Is it on Jobs Duniya?"
+        scope={f.from ? 'Now' : null}
         description="Every GTM job by when the scraper last saw it, against its state on Jobs Duniya. JD's rule: a job is active while GTM saw it in the last 60 days, so Fresh, Live and Aging should be active and Stale should be inactive."
       >
         {recentMissing > 0 && (
@@ -132,7 +134,7 @@ export default async function OutboundPage({ searchParams }: { searchParams: Pro
       </Panel>
 
       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <Panel title="By market" description="Country the scan targeted. Click to filter the whole page.">
+        <Panel title="By market" description={`${f.from ? 'Jobs seen in the period, by the' : 'The'} country the scan targeted. Click to filter the whole page.`}>
           <BarList items={s.markets} hrefFor={b => hrefWith(PATH, sp, { market: f.market === b.label ? null : b.label })} />
         </Panel>
         <Panel title="By job function" description="LinkedIn functions grouped into broad buckets.">
@@ -144,10 +146,10 @@ export default async function OutboundPage({ searchParams }: { searchParams: Pro
         <Panel title="By industry" description="Whitecarrot industry bucket of the hiring company.">
           <BarList items={s.industries} mutedLabels={['Unknown', 'Other']} />
         </Panel>
-        <Panel title="Hiring companies by outbound stage" description="Companies with a live job, by how far our outreach has got.">
+        <Panel title="Hiring companies by outbound stage" description={`Companies with a job seen ${f.from ? 'in the period' : 'in the last 30 days'}, by how far our outreach has got.`}>
           <BarList items={s.outboundStages} color="var(--series-1)" mutedLabels={['Not researched']} />
         </Panel>
-        <Panel title="Recent scan runs" description="Jobs returned per run (new / re-seen / unmatched)." bodyClassName="px-0 pb-2">
+        <Panel title="Recent scan runs" scope={f.market ? 'All markets' : null} description={`Jobs returned per run (new / re-seen / unmatched)${f.from ? ', in the period' : ''}.`} bodyClassName="px-0 pb-2">
           <ScanRuns runs={s.runs} />
         </Panel>
       </div>

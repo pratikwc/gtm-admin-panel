@@ -4,11 +4,14 @@ export function Panel({
   title,
   description,
   action,
+  scope,
   children,
   className,
   bodyClassName,
 }: {
   title: string;
+  /** Shown as a small chip by the title when the panel ignores a filter, e.g. "Now" or "All markets". */
+  scope?: string | null;
   description?: React.ReactNode;
   action?: React.ReactNode;
   children: React.ReactNode;
@@ -19,7 +22,14 @@ export function Panel({
     <section className={cn('flex min-w-0 flex-col rounded-2xl border bg-card', className)}>
       <header className="flex items-start justify-between gap-3 px-6 pb-4 pt-5">
         <div className="min-w-0">
-          <h2 className="font-display text-xl font-medium leading-tight tracking-tight">{title}</h2>
+          <h2 className="font-display text-xl font-medium leading-tight tracking-tight">
+            {title}
+            {scope && (
+              <span className="ml-2 inline-block translate-y-[-2px] rounded-full border px-2 py-0.5 align-middle font-sans text-[11px] font-medium tracking-normal text-muted-foreground">
+                {scope}
+              </span>
+            )}
+          </h2>
           {description && <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{description}</p>}
         </div>
         {action}

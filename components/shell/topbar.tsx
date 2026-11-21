@@ -40,7 +40,11 @@ export function Topbar({
     startTransition(() => router.push(`${pathname}${next.size ? `?${next}` : ''}`, { scroll: false }));
   };
 
-  const showMarket = pathname !== '/applications';
+  // These tabs have no country data, so the market filter can't apply: show it disabled and say why.
+  const noMarket =
+    pathname === '/applications' ? 'Applications have no country data, so this tab always shows all markets.'
+    : pathname.startsWith('/reached/calls') ? 'Outbound calls are coming soon.'
+    : null;
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
@@ -80,9 +84,13 @@ export function Topbar({
               ))}
             </SelectContent>
           </Select>
-          {showMarket && (
-            <Select value={sp.get('market') ?? 'all'} onValueChange={v => setParam('market', v === 'all' ? null : v)}>
-              <SelectTrigger className="h-9 w-[150px] bg-card" aria-label="Market">
+          <span title={noMarket ?? undefined}>
+            <Select
+              value={noMarket ? 'all' : sp.get('market') ?? 'all'}
+              onValueChange={v => setParam('market', v === 'all' ? null : v)}
+              disabled={!!noMarket}
+            >
+              <SelectTrigger className="h-9 w-[150px] bg-card" aria-label={noMarket ? `Market (not available: ${noMarket})` : 'Market'}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -92,7 +100,7 @@ export function Topbar({
                 ))}
               </SelectContent>
             </Select>
-          )}
+          </span>
           <form action={refreshAction}>
             <Button type="submit" variant="outline" size="sm" className="h-9 bg-card" title="Re-read both databases now">
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" />

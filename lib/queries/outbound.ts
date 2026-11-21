@@ -23,6 +23,8 @@ const FUNCTION_SQL = functionCaseSql('j.job_function');
 
 /** $1 = market (nullable). */
 const MARKET_WHERE = `($1::text IS NULL OR j.scan_market = $1)`;
+/** $2 = period start (nullable): jobs seen (scraped, new or again) in the period. */
+const SEEN_WHERE = `($2::timestamptz IS NULL OR j.last_seen >= $2::timestamptz)`;
 
 export interface OutboundSummary {
   kpis: {
@@ -75,17 +77,18 @@ async function summary(market: string | null, fromIso: string | null, prevIso: s
     [market, fromIso, prevIso],
   );
 
-  const group = (expr: string, extraJoin = '', limit = 12) =>
+  // Breakdowns count jobs seen in the period (all jobs for All time). Status is about today, so it ignores the period.
+  const group = (expr: string, extraJoin = '', limit = 12, period = true) =>
     gtm<{ label: string | null; value: number }>(
       `SELECT ${expr} AS label, count(*)::int AS value
          FROM jobs j ${extraJoin}
-        WHERE ${MARKET_WHERE}
+        WHERE ${MARKET_WHERE} AND ${period ? SEEN_WHERE : '($2::timestamptz IS NULL OR TRUE)'}
         GROUP BY 1 ORDER BY 2 DESC LIMIT ${limit}`,
-      p,
+      [market, fromIso],
     ).then(rows => rows.map(r => ({ label: r.label ?? 'Unknown', value: r.value })));
 
   const [status, markets, functions, seniority, sources, industries, outboundStages, trend, runs, lastScan] = await Promise.all([
-    group(STATUS_SQL, '', 10),
+    group(STATUS_SQL, '', 10, false),
     group('j.scan_market', '', 10),
     group(FUNCTION_SQL, '', 16),
     group(`coalesce(nullif(j.experience_level, ''), 'Not Applicable')`, '', 10),
@@ -95,11 +98,12 @@ async function summary(market: string | null, fromIso: string | null, prevIso: s
     gtm<{ label: string; value: number }>(
       `WITH live AS (
          SELECT DISTINCT j.company_hs_id FROM jobs j
-          WHERE ${MARKET_WHERE} AND j.company_hs_id IS NOT NULL AND j.last_seen > now() - interval '30 days')
+          WHERE ${MARKET_WHERE} AND j.company_hs_id IS NOT NULL
+            AND j.last_seen >= coalesce($2::timestamptz, now() - interval '30 days'))
        SELECT coalesce(s.outbound_status, 'not_researched') AS label, count(*)::int AS value
          FROM live l LEFT JOIN company_outbound_status s ON s.company_hs_id = l.company_hs_id
         GROUP BY 1 ORDER BY 2 DESC`,
-      p,
+      [market, fromIso],
     ),
     gtm<{ t: string; new_jobs: number }>(
       `SELECT date_trunc('${grain}', j.first_seen)::date::text AS t, count(*)::int AS new_jobs
@@ -110,7 +114,9 @@ async function summary(market: string | null, fromIso: string | null, prevIso: s
     ),
     gtm<ScanRun>(
       `SELECT run_id, scan, started_at::text, jobs_returned, jobs_new, jobs_reseen, unmatched, apify_status
-         FROM job_scan_runs ORDER BY started_at DESC LIMIT 15`,
+         FROM job_scan_runs WHERE ($1::timestamptz IS NULL OR started_at >= $1::timestamptz)
+        ORDER BY started_at DESC LIMIT 15`,
+      [fromIso],
     ),
     gtm<{ started_at: string | null; scan: string | null; run_id: string | null }>(
       `SELECT started_at::text, scan, run_id FROM job_scan_runs ORDER BY started_at DESC LIMIT 1`,
@@ -159,7 +165,7 @@ export const OUTBOUND_STAGE_LABEL: Record<string, string> = {
   replied: 'Replied',
 };
 
-const summaryCached = cached('outbound-summary-v1', 'outbound', summary);
+const summaryCached = cached('outbound-summary-v2', 'outbound', summary);
 
 export function getOutboundSummary(f: Filters) {
   return summaryCached(f.market, f.from?.toISOString() ?? null, f.prevFrom?.toISOString() ?? null, f.days);
@@ -180,11 +186,12 @@ export interface OutboundJobRow {
   linkedin_job_url: string | null;
 }
 
-async function jobs(market: string | null, q: string, status: string | null, page: number) {
+async function jobs(market: string | null, q: string, status: string | null, page: number, fromIso: string | null = null) {
   const where = `${MARKET_WHERE}
     AND ($2::text = '' OR j.job_title ILIKE '%' || $2 || '%' OR j.company_name ILIKE '%' || $2 || '%')
-    AND ($3::text IS NULL OR ${STATUS_SQL} = $3)`;
-  const params = [market, q, status];
+    AND ($3::text IS NULL OR ${STATUS_SQL} = $3)
+    AND ($4::timestamptz IS NULL OR j.last_seen >= $4::timestamptz)`;
+  const params = [market, q, status, fromIso];
   const [rows, [{ n }]] = await Promise.all([
     gtm<OutboundJobRow>(
       `SELECT j.job_id::text, j.job_title, j.company_name, j.company_hs_id, j.scan_market,
@@ -200,10 +207,10 @@ async function jobs(market: string | null, q: string, status: string | null, pag
   return { rows, total: n };
 }
 
-const jobsCached = cached('outbound-jobs-v1', 'outbound', jobs);
+const jobsCached = cached('outbound-jobs-v2', 'outbound', jobs);
 export function getOutboundJobs(f: Filters) {
   const status = OUTBOUND_STATUS.some(s => s.key === f.status) ? f.status : null;
-  return jobsCached(f.market, f.q, status, f.page);
+  return jobsCached(f.market, f.q, status, f.page, f.from?.toISOString() ?? null);
 }
 
 export interface OutboundCompanyRow {
@@ -294,8 +301,9 @@ export async function exportOutboundJobs(f: Filters) {
       WHERE ${MARKET_WHERE}
         AND ($2::text = '' OR j.job_title ILIKE '%' || $2 || '%' OR j.company_name ILIKE '%' || $2 || '%')
         AND ($3::text IS NULL OR ${STATUS_SQL} = $3)
+        AND ($4::timestamptz IS NULL OR j.last_seen >= $4::timestamptz)
       ORDER BY j.last_seen DESC NULLS LAST LIMIT ${EXPORT_LIMIT}`,
-    [f.market, f.q, status],
+    [f.market, f.q, status, f.from?.toISOString() ?? null],
   );
 }
 

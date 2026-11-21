@@ -3,6 +3,11 @@ import { gtm } from '@/lib/db/gtm';
 import { jd } from '@/lib/db/jd';
 import { cached } from '@/lib/cache';
 import { env } from '@/lib/env';
+import { countryCaseSql } from '@/lib/buckets';
+
+/** JD jobs have no market column: the country is parsed from the location, as on the JD published tab. */
+const JD_MARKET = `($1::text IS NULL OR ${countryCaseSql('location')} = $1)`;
+const GTM_MARKET = `($1::text IS NULL OR scan_market = $1)`;
 
 export { freshness, type Health } from '@/lib/health';
 
@@ -26,20 +31,24 @@ export interface PipelineSnapshot {
  * join each other, so we pull the id sets (a few tens of thousands of ids)
  * and diff them here.
  */
-async function snapshot(fromIso: string | null): Promise<PipelineSnapshot> {
+async function snapshot(fromIso: string | null, market: string | null = null): Promise<PipelineSnapshot> {
+  // Scraped, matched and synced count what happened in the period; live and fresh are where things stand today.
   const [[g], gtmLive, [scan], [j], jdActive, [apps]] = await Promise.all([
     gtm<{ total: number; matched: number }>(
-      `SELECT count(*)::int AS total, count(*) FILTER (WHERE company_hs_id IS NOT NULL)::int AS matched FROM jobs`,
+      `SELECT count(*)::int AS total, count(*) FILTER (WHERE company_hs_id IS NOT NULL)::int AS matched FROM jobs
+        WHERE ${GTM_MARKET} AND ($2::timestamptz IS NULL OR first_seen >= $2::timestamptz)`,
+      [market, fromIso],
     ),
-    gtm<{ id: string }>(`SELECT job_id::text AS id FROM jobs WHERE last_seen > now() - interval '60 days'`),
+    gtm<{ id: string }>(`SELECT job_id::text AS id FROM jobs WHERE last_seen > now() - interval '60 days' AND ${GTM_MARKET}`, [market]),
     gtm<{ at: string | null }>(`SELECT max(started_at)::text AS at FROM job_scan_runs`),
     jd<{ synced: number; fresh: number; last_sync: string | null; latest_update: string | null }>(
-      `SELECT (SELECT count(*) FROM jobs WHERE source_id IS NOT NULL)::int AS synced,
-              (SELECT count(*) FROM jobs WHERE is_active AND source_id IS NOT NULL AND posted_date > current_date - 60)::int AS fresh,
+      `SELECT (SELECT count(*) FROM jobs WHERE source_id IS NOT NULL AND ${JD_MARKET} AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz))::int AS synced,
+              (SELECT count(*) FROM jobs WHERE is_active AND source_id IS NOT NULL AND posted_date > current_date - 60 AND ${JD_MARKET})::int AS fresh,
               (SELECT last_jobs_synced_at::text FROM gtm_sync_state LIMIT 1) AS last_sync,
               (SELECT max(updated_at)::text FROM jobs WHERE source_id IS NOT NULL) AS latest_update`,
+      [market, fromIso],
     ),
-    jd<{ id: string }>(`SELECT source_id AS id FROM jobs WHERE is_active AND source_id IS NOT NULL`),
+    jd<{ id: string }>(`SELECT source_id AS id FROM jobs WHERE is_active AND source_id IS NOT NULL AND ${JD_MARKET}`, [market]),
     jd<{ n: number; latest: string | null }>(
       `SELECT count(*) FILTER (WHERE $1::timestamptz IS NULL OR created_at >= $1::timestamptz)::int AS n,
               max(created_at)::text AS latest FROM chat_interactions`,
@@ -56,12 +65,12 @@ async function snapshot(fromIso: string | null): Promise<PipelineSnapshot> {
 
   return {
     funnel: [
-      { key: 'scraped', label: 'Scraped', value: g.total, hint: 'LinkedIn jobs in GTM', href: '/outbound' },
+      { key: 'scraped', label: 'Scraped', value: g.total, hint: fromIso ? 'new LinkedIn jobs found in the period' : 'LinkedIn jobs in GTM', href: '/outbound' },
       { key: 'matched', label: 'Matched', value: g.matched, hint: 'linked to a company we track', href: '/outbound', of: 'scraped' },
-      { key: 'live', label: 'Live in GTM', value: liveSet.size, hint: 'seen in the last 60 days', href: '/outbound', of: 'scraped' },
-      { key: 'synced', label: 'Synced to JD', value: j.synced, hint: 'ever copied into Jobs Duniya', href: '/published', of: 'scraped' },
-      { key: 'fresh', label: 'Fresh on JD', value: j.fresh, hint: 'active and posted ≤ 60 days', href: '/published?status=active_fresh', of: 'synced' },
-      { key: 'apps', label: 'Applications', value: apps.n, hint: 'form submissions in the period', href: '/applications' },
+      { key: 'live', label: 'Live in GTM', value: liveSet.size, hint: 'now: seen in the last 60 days', href: '/outbound', of: fromIso ? undefined : 'scraped' },
+      { key: 'synced', label: 'Synced to JD', value: j.synced, hint: fromIso ? 'copied into Jobs Duniya in the period' : 'ever copied into Jobs Duniya', href: '/published', of: 'scraped' },
+      { key: 'fresh', label: 'Fresh on JD', value: j.fresh, hint: 'now: active and posted ≤ 60 days', href: '/published?status=active_fresh', of: fromIso ? undefined : 'synced' },
+      { key: 'apps', label: 'Applications', value: apps.n, hint: market ? 'form submissions in the period (all markets)' : 'form submissions in the period', href: '/applications' },
     ],
     lastScanAt: scan.at,
     lastSyncAt: j.last_sync,
@@ -76,9 +85,9 @@ async function snapshot(fromIso: string | null): Promise<PipelineSnapshot> {
   };
 }
 
-const snapshotCached = cached('pipeline-snapshot-v2', 'pipeline', snapshot);
-export function getPipelineSnapshot(fromIso: string | null) {
-  return snapshotCached(fromIso);
+const snapshotCached = cached('pipeline-snapshot-v3', 'pipeline', snapshot);
+export function getPipelineSnapshot(fromIso: string | null, market: string | null = null) {
+  return snapshotCached(fromIso, market);
 }
 
 export interface ApiStatus {

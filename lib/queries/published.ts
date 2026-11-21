@@ -27,6 +27,8 @@ const STATUS_SQL = `(CASE
 const COUNTRY_SQL = countryCaseSql('j.location');
 const MARKET_WHERE = `($1::text IS NULL OR ${COUNTRY_SQL} = $1)`;
 const REAL_ACTIVE = `j.is_active AND j.source_id IS NOT NULL`;
+/** $2 = period start (nullable): live listings posted in the period. */
+const POSTED_WHERE = `($2::timestamptz IS NULL OR j.posted_date >= $2::date)`;
 
 export interface PublishedSummary {
   kpis: {
@@ -52,13 +54,13 @@ export interface PublishedSummary {
 
 async function summary(market: string | null, fromIso: string | null, prevIso: string | null, days: number | null): Promise<PublishedSummary> {
   const grain: 'day' | 'week' = days && days <= 90 ? 'day' : 'week';
-  const p = [market];
-
-  const group = (expr: string, where = 'TRUE', join = '', limit = 12) =>
+  // Breakdowns of live listings count those posted in the period. Status is about today, so it ignores the period.
+  const group = (expr: string, where = 'TRUE', join = '', limit = 12, period = true) =>
     jd<{ label: string | null; value: number }>(
       `SELECT ${expr} AS label, count(*)::int AS value FROM jobs j ${join}
-        WHERE ${MARKET_WHERE} AND ${where} GROUP BY 1 ORDER BY 2 DESC LIMIT ${limit}`,
-      p,
+        WHERE ${MARKET_WHERE} AND ${where} AND ${period ? POSTED_WHERE : '($2::timestamptz IS NULL OR TRUE)'}
+        GROUP BY 1 ORDER BY 2 DESC LIMIT ${limit}`,
+      [market, fromIso],
     ).then(rows => rows.map(r => ({ label: r.label ?? 'Unknown', value: r.value })));
 
   const [[k], [sync], status, age, countries, jobTypes, industries, topCompanies, roles, trend] = await Promise.all([
@@ -82,7 +84,7 @@ async function summary(market: string | null, fromIso: string | null, prevIso: s
     jd<{ last_jobs_synced_at: string | null; last_companies_synced_at: string | null }>(
       `SELECT last_jobs_synced_at::text, last_companies_synced_at::text FROM gtm_sync_state LIMIT 1`,
     ).then(r => (r.length ? r : [{ last_jobs_synced_at: null, last_companies_synced_at: null }])),
-    group(STATUS_SQL, 'TRUE', '', 10),
+    group(STATUS_SQL, 'TRUE', '', 10, false),
     jd<{ label: string; active: number; inactive: number }>(
       `SELECT CASE WHEN j.posted_date > current_date - 7 THEN '< 7 days' WHEN j.posted_date > current_date - 30 THEN '7–30 days'
                    WHEN j.posted_date > current_date - 60 THEN '30–60 days' WHEN j.posted_date > current_date - 90 THEN '60–90 days' ELSE '90+ days' END AS label,
@@ -99,13 +101,13 @@ async function summary(market: string | null, fromIso: string | null, prevIso: s
     jd<{ label: string; value: number }>(
       `WITH r AS (
          SELECT x->>'label' AS label, websearch_to_tsquery('english', x->>'query') AS q
-           FROM jsonb_array_elements($2::jsonb) x)
+           FROM jsonb_array_elements($3::jsonb) x)
        SELECT r.label, count(*)::int AS value
          FROM r CROSS JOIN LATERAL (
            SELECT 1 FROM jobs j
-            WHERE to_tsvector('english', j.title) @@ r.q AND ${REAL_ACTIVE} AND ${MARKET_WHERE}) m
+            WHERE to_tsvector('english', j.title) @@ r.q AND ${REAL_ACTIVE} AND ${MARKET_WHERE} AND ${POSTED_WHERE}) m
         GROUP BY 1 ORDER BY 2 DESC LIMIT 15`,
-      [market, JSON.stringify(ROLES.map(r => ({ label: r.label, query: r.query })))],
+      [market, fromIso, JSON.stringify(ROLES.map(r => ({ label: r.label, query: r.query })))],
     ),
     jd<{ t: string; value: number }>(
       `SELECT date_trunc('${grain}', j.posted_date)::date::text AS t, count(*)::int AS value
@@ -148,7 +150,7 @@ async function summary(market: string | null, fromIso: string | null, prevIso: s
   };
 }
 
-const summaryCached = cached('published-summary-v3', 'published', summary);
+const summaryCached = cached('published-summary-v4', 'published', summary);
 export function getPublishedSummary(f: Filters) {
   return summaryCached(f.market, f.from?.toISOString() ?? null, f.prevFrom?.toISOString() ?? null, f.days);
 }
@@ -166,12 +168,13 @@ export interface PublishedJobRow {
   source_id: string | null;
 }
 
-async function jobs(market: string | null, q: string, status: string | null, page: number) {
+async function jobs(market: string | null, q: string, status: string | null, page: number, fromIso: string | null = null) {
   const where = `${MARKET_WHERE}
     AND ($2::text = '' OR j.title ILIKE '%' || $2 || '%' OR c.name ILIKE '%' || $2 || '%')
-    AND ($3::text IS NULL OR ${STATUS_SQL} = $3)`;
+    AND ($3::text IS NULL OR ${STATUS_SQL} = $3)
+    AND ($4::timestamptz IS NULL OR j.posted_date >= $4::date)`;
   const from = `FROM jobs j LEFT JOIN companies c ON c.id = j.company_id`;
-  const params = [market, q, status];
+  const params = [market, q, status, fromIso];
   const [rows, [{ n }]] = await Promise.all([
     jd<PublishedJobRow>(
       `SELECT j.id::text, j.title, c.name AS company_name, j.location, ${COUNTRY_SQL} AS country, j.job_type,
@@ -186,10 +189,10 @@ async function jobs(market: string | null, q: string, status: string | null, pag
   return { rows, total: n };
 }
 
-const jobsCached = cached('published-jobs-v1', 'published', jobs);
+const jobsCached = cached('published-jobs-v2', 'published', jobs);
 export function getPublishedJobs(f: Filters) {
   const status = PUBLISHED_STATUS.some(s => s.key === f.status) ? f.status : null;
-  return jobsCached(f.market, f.q, status, f.page);
+  return jobsCached(f.market, f.q, status, f.page, f.from?.toISOString() ?? null);
 }
 
 export interface PublishedJobDetail extends PublishedJobRow {

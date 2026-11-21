@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   campaignStatus, dataSpace, emailAudience, lifecycleKey, mailboxHealth, marketOf, outcomeKey, outreachKey, rate,
-  funnelCounts, funnelStep, toCompanyRow, toContactRow, trend, type HubspotSnapshot,
+  atStep, funnelCounts, funnelStep, researchDate, toCompanyRow, toContactRow, trend, type HubspotSnapshot,
 } from './marketing';
 
 describe('vocabularies', () => {
@@ -82,20 +82,27 @@ function fixture(): HubspotSnapshot {
 describe('dataSpace', () => {
   const base = { market: null, from: '2026-11-01', prevFrom: '2026-10-01', grain: 'day' as const, step: null, source: null, q: '' };
 
-  it('counts the four nested funnel steps', () => {
-    const d = dataSpace(fixture(), base);
+  it('counts the nested funnel steps (all time)', () => {
+    const d = dataSpace(fixture(), { ...base, from: null, prevFrom: null });
     // 1: replied + contacted -> replied; 2: customer, never reached -> data; 3: research done -> researched
     expect(d.totals).toMatchObject({ data: 3, researched: 2, reached: 1, replied: 1, positive: 0, opportunity: 0 });
     expect(d.funnel.map(s => s.value)).toEqual([3, 2, 1, 1, 0, 0]);
-    expect(d.added).toBe(2);
     expect(d.breakdown.source.find(s => s.label === 'Job scan (Supabase)')?.replied).toBe(1);
     expect(d.table[0].id).toBe('3'); // newest first
+  });
+
+  it('counts activity in the period when a range is set', () => {
+    const d = dataSpace(fixture(), base);
+    // added since 1 Nov: 1 and 3; emailed since 1 Nov: 1; no research or reply dates in the fixture
+    expect(d.totals).toMatchObject({ data: 2, researched: 0, reached: 1, replied: 0 });
+    expect(d.added).toBe(2);
+    expect(d.table.map(c => c.id).sort()).toEqual(['1', '3']); // 2 had nothing happen in the period
   });
 
   it('filters by market and by step', () => {
     const d = dataSpace(fixture(), { ...base, from: null, prevFrom: null, market: 'United Arab Emirates', step: 'researched' });
     expect(d.totals.data).toBe(2);
-    expect(d.table.map(c => c.id)).toEqual(['3']);
+    expect(d.table.map(c => c.id)).toEqual(['3', '1']); // at the step or beyond, newest first
   });
 
   it('counts only email replies as replied, not lifecycle stages', () => {
@@ -148,5 +155,26 @@ describe('email funnel: replied, positive reply, opportunity', () => {
     const { isPositiveReply } = await import('./marketing');
     expect([1, 2, 3, 4].every(isPositiveReply)).toBe(true);
     expect([0, -1, -2, null].some(isPositiveReply)).toBe(false);
+  });
+});
+
+describe('step dates', () => {
+  it('reads the research date from the brief file name', () => {
+    expect(researchDate('https://x.supabase.co/storage/v1/object/public/briefs/2026-11-12_09-30_Acme_brief.md')).toBe('2026-11-12');
+    expect(researchDate(null)).toBeNull();
+    expect(researchDate('https://example.com/brief.md')).toBeNull();
+  });
+
+  it('counts a step in a period only when it happened in that period', () => {
+    const c = company('5', {
+      createdate: '2026-01-01', instantly_last_contacted_at: '2026-11-20', instantly_any_contact_replied: 'true', instantly_last_reply_at: '2026-11-21',
+      research_brief_link: 'briefs/2026-10-01_10-00_Co_brief.md',
+    });
+    expect(atStep(c, 'replied')).toBe(true);
+    expect(atStep(c, 'data', '2026-11-01')).toBe(false); // added long ago
+    expect(atStep(c, 'researched', '2026-11-01')).toBe(false); // researched in October
+    expect(atStep(c, 'reached', '2026-11-01')).toBe(true);
+    expect(atStep(c, 'replied', '2026-11-01')).toBe(true);
+    expect(funnelCounts([c], '2026-11-01')).toMatchObject({ data: 0, researched: 0, reached: 1, replied: 1 });
   });
 });
