@@ -12,7 +12,9 @@ export const MARKETS = [
   { value: 'India', label: 'India' },
   { value: 'Philippines', label: 'Philippines' },
   { value: 'Kuwait', label: 'Kuwait' },
+  { value: 'Qatar', label: 'Qatar' },
   { value: 'Bahrain', label: 'Bahrain' },
+  { value: 'Oman', label: 'Oman' },
 ] as const;
 
 export type SearchParams = Record<string, string | string[] | undefined>;

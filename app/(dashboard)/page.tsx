@@ -4,6 +4,8 @@ import { parseFilters, type SearchParams } from '@/lib/filters';
 import { fmtAgo, fmtDate, fmtInt, fmtPct } from '@/lib/format';
 import { freshness, type Health } from '@/lib/health';
 import { getPipelineSnapshot } from '@/lib/queries/pipeline';
+import { getHubspotSnapshot } from '@/lib/queries/dataspace';
+import { isReached } from '@/lib/marketing';
 import { Panel, SectionHeader } from '@/components/charts/panel';
 import { StatusChip, type ChipTone } from '@/components/charts/status-chip';
 import { DataAsOf } from '@/components/shell/data-as-of';
@@ -18,7 +20,11 @@ const WORD: Record<Health, string> = { ok: 'On schedule', warn: 'Late', bad: 'St
 export default async function OverviewPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const sp = await searchParams;
   const f = parseFilters(sp);
-  const { data: p, fetchedAt } = await getPipelineSnapshot(f.from?.toISOString() ?? null);
+  const [{ data: p, fetchedAt }, hub] = await Promise.all([
+    getPipelineSnapshot(f.from?.toISOString() ?? null),
+    // Separate source: if HubSpot is down, the rest of Overview still renders.
+    getHubspotSnapshot().then(r => r.data).catch(() => null),
+  ]);
   const qs = new URLSearchParams();
   if (f.range !== '90d') qs.set('range', f.range);
   const keep = qs.size ? `?${qs}` : '';
@@ -29,20 +35,73 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
     { label: 'GTM job scans', detail: 'Apify LinkedIn scrape (location + company scans)', at: p.lastScanAt, href: '/outbound' },
     { label: 'GTM → Jobs Duniya sync', detail: 'Vercel cron that copies jobs into JD', at: syncAt, href: '/published' },
     { label: 'Candidate submissions', detail: 'Jobs Duniya form', at: p.latestApplicationAt, href: '/applications' },
+    ...(hub
+      ? [
+          {
+            label: 'New companies in HubSpot',
+            detail: 'Newest target company created (Supabase sync and manual adds)',
+            at: hub.companies.reduce<string | null>((a, c) => (c.created && (!a || c.created > a) ? c.created : a), null),
+            href: '/data',
+          },
+          {
+            label: 'Outbound email',
+            detail: 'Latest Instantly email recorded on a HubSpot contact',
+            at: hub.contacts.reduce<string | null>((a, c) => (c.lastSent && (!a || c.lastSent > a) ? c.lastSent : a), null),
+            href: '/reached',
+          },
+        ]
+      : []),
   ];
+
+  const marketing = hub
+    ? [
+        { key: 'target', label: 'Target companies', value: hub.companies.length, hint: 'Outbound records in HubSpot', href: '/data' },
+        { key: 'reached', label: 'Reached out', value: hub.companies.filter(isReached).length, hint: 'At least one contact emailed', href: '/reached' },
+        { key: 'replied', label: 'Replied', value: hub.companies.filter(c => c.outreach === 'replied').length, hint: 'A contact replied', href: '/reached' },
+        { key: 'opportunity', label: 'Opportunity', value: hub.companies.filter(c => c.stage === 'opportunity').length, hint: 'HubSpot lifecycle stage', base: 0, href: '/data?stage=opportunity#table' },
+        { key: 'customer', label: 'Customer', value: hub.companies.filter(c => c.stage === 'customer').length, hint: 'HubSpot lifecycle stage', base: 0, href: '/data?stage=customer#table' },
+      ]
+    : null;
 
   return (
     <>
       <SectionHeader
         title="Overview"
-        description="One view of the whole pipeline: jobs we scrape for outbound, what Jobs Duniya publishes, and the candidates it brings in."
+        description="Everything marketing runs, in one place: the companies we can reach, who we have reached, the jobs we scrape, and what Jobs Duniya publishes and brings in."
       >
         <DataAsOf at={fetchedAt} />
       </SectionHeader>
 
       <JdApiBanner />
 
-      <Panel title="Pipeline" description="From scraping to applications. Each stage shows its share of the stage it comes from. Click a stage to open it.">
+      {marketing && (
+        <Panel className="mb-4" title="Marketing funnel" description="Target companies in HubSpot and how far outreach has got with them (all time). Click a stage to open it.">
+          <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {marketing.map((s, i) => {
+              // Reached out and Replied are nested in the step before; lifecycle stages are not, so they compare to the total.
+              const prev = i === 0 ? null : 'base' in s && s.base != null ? marketing[s.base] : marketing[i - 1];
+              const conv = prev?.value ? s.value / prev.value : null;
+              return (
+                <li key={s.key}>
+                  <Link href={s.href} className="group flex h-full flex-col rounded-lg border bg-background/50 p-4 transition-colors hover:border-primary/50 hover:bg-accent/40">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span className="font-medium uppercase tracking-wider">{i + 1}. {s.label}</span>
+                      <ChevronRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
+                    </div>
+                    <div className="tabular mt-2 text-2xl font-semibold tracking-tight">{fmtInt(s.value)}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{s.hint}</div>
+                    <div className="tabular mt-auto pt-3 text-[11px] text-muted-foreground">
+                      {conv != null && prev ? `${fmtPct(conv, conv < 0.1 ? 1 : 0)} of ${prev.label.toLowerCase()}` : 'Starting point'}
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ol>
+        </Panel>
+      )}
+
+      <Panel title="Jobs pipeline" description="From scraping to applications. Each stage shows its share of the stage it comes from. Click a stage to open it.">
         <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
           {p.funnel.map((s, i) => {
             const base = s.of ? p.funnel.find(x => x.key === s.of) : null;
@@ -117,7 +176,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         </Panel>
       </div>
 
-      <div className="mt-4 grid gap-4 md:grid-cols-3">
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {SECTIONS.map(s => {
           const Icon = s.icon;
           return (

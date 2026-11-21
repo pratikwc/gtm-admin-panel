@@ -1,0 +1,405 @@
+/**
+ * Marketing data (HubSpot companies/contacts + Instantly) mapped to the
+ * panel's vocabulary. Pure functions only, so they can be unit-tested.
+ */
+import { addDays, format, parseISO, startOfISOWeek } from 'date-fns';
+import { countryBucket, UNCLASSIFIED } from './buckets';
+import type { Bucket, Kpi, TrendPoint } from './queries/types';
+
+// ---------------------------------------------------------------- vocabularies
+
+/** HubSpot lifecycle stages, in funnel order. HubSpot's "lead" value is relabelled "Target Company" in this portal. */
+export const LIFECYCLE = [
+  { key: 'target', label: 'Target company', values: ['lead', 'subscriber', 'marketingqualifiedlead', 'salesqualifiedlead'] },
+  { key: 'lead', label: 'Lead', values: ['1433831971'] },
+  { key: 'opportunity', label: 'Opportunity', values: ['opportunity'] },
+  { key: 'customer', label: 'Customer', values: ['customer', 'evangelist'] },
+  { key: 'churned', label: 'Churned', values: ['1398383212'] },
+] as const;
+export type LifecycleKey = (typeof LIFECYCLE)[number]['key'] | 'other';
+
+export function lifecycleKey(v: string | null | undefined): LifecycleKey {
+  if (!v) return 'other';
+  return LIFECYCLE.find(s => (s.values as readonly string[]).includes(v))?.key ?? 'other';
+}
+
+/** Company outreach progress (HubSpot `instantly_company_status`), in order. */
+export const OUTREACH = [
+  { key: 'not_researched', label: 'Not researched', hint: 'No research or contacts yet' },
+  { key: 'researched', label: 'Researched', hint: 'Research done, not yet in a sequence' },
+  { key: 'in_sequence', label: 'In sequence', hint: 'Added to an Instantly campaign, no response yet' },
+  { key: 'opened', label: 'Opened', hint: 'A contact opened an email' },
+  { key: 'replied', label: 'Replied', hint: 'A contact replied' },
+  { key: 'bounced', label: 'Bounced', hint: 'An email to a contact bounced' },
+] as const;
+export type OutreachKey = (typeof OUTREACH)[number]['key'];
+
+export function outreachKey(v: string | null | undefined): OutreachKey {
+  switch (v) {
+    case 'company_research_done':
+    case 'research_completed':
+      return 'researched';
+    case 'added_to_instantly_sequence':
+      return 'in_sequence';
+    case 'opened':
+    case 'replied':
+    case 'bounced':
+      return v;
+    default:
+      return 'not_researched';
+  }
+}
+
+const REACHED_OUTREACH: OutreachKey[] = ['in_sequence', 'opened', 'replied', 'bounced'];
+const RESEARCHED_OUTREACH: OutreachKey[] = ['researched', ...REACHED_OUTREACH];
+
+/** HubSpot `lead_sources` values -> display labels. job-scan is our Supabase job scraper. */
+const SOURCE_LABEL: Record<string, string> = {
+  'Sales Navigator': 'Sales Navigator',
+  'job-scan': 'Job scan (Supabase)',
+  'Inbound (Website)': 'Inbound website',
+  'manual-research': 'Manual research',
+  'Abhi - Data': 'Abhi data',
+};
+export const sourceLabel = (v: string) => SOURCE_LABEL[v] ?? v;
+
+const PRIORITY_LABEL: Record<string, string> = {
+  p1_no_ats_uae_ha: 'P1 · No ATS · UAE',
+  p4_ats_uae_hk_sg_ha: 'P4 · Has ATS · UAE / HK / SG',
+  unclassified: 'Unclassified',
+};
+export const priorityLabel = (v: string | null | undefined) => (v ? PRIORITY_LABEL[v] ?? v : 'Not set');
+
+export const NOT_SET = 'Not set';
+export const UNKNOWN_COUNTRY = 'Unknown';
+
+/** Free-text HubSpot country -> one of our market names (or Other / Unknown). */
+export function marketOf(raw: string | null | undefined): string {
+  const b = countryBucket(raw);
+  return b === UNCLASSIFIED ? UNKNOWN_COUNTRY : b;
+}
+
+/** Instantly campaign status codes. */
+export const CAMPAIGN_STATUS: Record<number, { label: string; group: CampaignGroup }> = {
+  0: { label: 'Draft', group: 'draft' },
+  1: { label: 'Active', group: 'active' },
+  2: { label: 'Paused', group: 'paused' },
+  3: { label: 'Completed', group: 'completed' },
+  4: { label: 'Running subsequences', group: 'active' },
+  [-1]: { label: 'Accounts unhealthy', group: 'attention' },
+  [-2]: { label: 'Bounce protect', group: 'attention' },
+  [-99]: { label: 'Suspended', group: 'attention' },
+};
+export type CampaignGroup = 'active' | 'paused' | 'completed' | 'draft' | 'attention';
+export const CAMPAIGN_GROUPS: { key: CampaignGroup; label: string; hint: string }[] = [
+  { key: 'active', label: 'Active', hint: 'Sending now' },
+  { key: 'paused', label: 'Paused', hint: 'Stopped by us' },
+  { key: 'completed', label: 'Completed', hint: 'Every lead finished the sequence' },
+  { key: 'draft', label: 'Draft', hint: 'Not launched' },
+  { key: 'attention', label: 'Needs attention', hint: 'Unhealthy accounts, bounce protection or suspended' },
+];
+export const campaignStatus = (code: number) => CAMPAIGN_STATUS[code] ?? { label: `Status ${code}`, group: 'attention' as const };
+
+/** Contact-level email outcome (HubSpot `instantly_status`, unsubscribed wins). */
+export const OUTCOME = [
+  { key: 'sent', label: 'No response yet' },
+  { key: 'opened', label: 'Opened' },
+  { key: 'replied', label: 'Replied' },
+  { key: 'bounced', label: 'Bounced' },
+  { key: 'unsubscribed', label: 'Unsubscribed' },
+] as const;
+export type OutcomeKey = (typeof OUTCOME)[number]['key'];
+
+export function outcomeKey(status: string | null | undefined, unsubscribed: boolean): OutcomeKey {
+  if (unsubscribed) return 'unsubscribed';
+  if (status === 'replied') return 'replied';
+  if (status === 'bounced') return 'bounced';
+  if (status === 'email_opened') return 'opened';
+  return 'sent';
+}
+
+/** Mailbox health from Instantly account fields. */
+export function mailboxHealth(a: { status: number; warmup_status: number; stat_warmup_score: number | null; setup_pending?: boolean }): 'good' | 'warn' | 'bad' {
+  if (a.status !== 1 || a.setup_pending) return 'bad';
+  if (a.warmup_status !== 1 || (a.stat_warmup_score ?? 0) < 80) return 'warn';
+  return 'good';
+}
+
+// ---------------------------------------------------------------- helpers
+
+export const rate = (n: number, d: number): number | null => (d > 0 ? n / d : null);
+
+export function count<T>(rows: T[], key: (r: T) => string | string[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) {
+    const k = key(r);
+    for (const one of Array.isArray(k) ? k : [k]) m.set(one, (m.get(one) ?? 0) + 1);
+  }
+  return m;
+}
+
+/** Map -> Bucket[], largest first, with `last` labels pushed to the end. */
+export function toBuckets(m: Map<string, number>, last: string[] = []): Bucket[] {
+  return [...m.entries()]
+    .map(([label, value]) => ({ label, value, key: label }))
+    .sort((a, b) => Number(last.includes(a.label)) - Number(last.includes(b.label)) || b.value - a.value);
+}
+
+/** Bucket[] in a fixed order (zero rows kept). */
+export function ordered(m: Map<string, number>, order: readonly { key: string; label: string }[]): Bucket[] {
+  return order.map(o => ({ key: o.key, label: o.label, value: m.get(o.key) ?? 0 }));
+}
+
+export const grainFor = (days: number | null): 'day' | 'week' => (days && days <= 90 ? 'day' : 'week');
+
+export function bucketDate(isoDay: string, grain: 'day' | 'week'): string {
+  return grain === 'day' ? isoDay.slice(0, 10) : format(startOfISOWeek(parseISO(isoDay.slice(0, 10))), 'yyyy-MM-dd');
+}
+
+/** Sum dated values into day/week buckets. */
+export function trend(points: { t: string; value: number }[], grain: 'day' | 'week'): TrendPoint[] {
+  const m = new Map<string, number>();
+  for (const p of points) {
+    const k = bucketDate(p.t, grain);
+    m.set(k, (m.get(k) ?? 0) + p.value);
+  }
+  return [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([t, value]) => ({ t, value }));
+}
+
+export const isoDay = (d: Date) => format(d, 'yyyy-MM-dd');
+export const inRange = (day: string | null, from: string | null, to?: string | null) =>
+  !!day && (!from || day >= from) && (!to || day < to);
+
+// ---------------------------------------------------------------- HubSpot snapshot (compact, cache-friendly)
+
+/** One target company, kept small: the full set (10k+) has to fit in Next's 2 MB cache entry. */
+export interface CompanyRow {
+  id: string;
+  name: string;
+  domain: string | null;
+  market: string;
+  stage: LifecycleKey;
+  sources: string[];
+  outreach: OutreachKey;
+  industry: string;
+  priority: string;
+  created: string | null; // yyyy-mm-dd
+  contacted: string | null; // yyyy-mm-dd, last Instantly contact
+}
+
+/** One contact we've emailed (has Instantly activity in HubSpot). */
+export interface ContactRow {
+  market: string;
+  outcome: OutcomeKey;
+  campaign: string;
+  mailbox: string;
+  lastSent: string | null; // yyyy-mm-dd
+  industry: string;
+  priority: string;
+  companyId: string | null;
+}
+
+export interface HubspotSnapshot {
+  companies: CompanyRow[];
+  contacts: ContactRow[];
+  outboundContacts: number;
+  portalId: string | null;
+}
+
+type Props = Record<string, string | null>;
+const day = (v: string | null | undefined) => (v ? v.slice(0, 10) : null);
+
+export function toCompanyRow(id: string, p: Props): CompanyRow {
+  return {
+    id,
+    name: (p.name ?? '').slice(0, 80) || p.domain || `Company ${id}`,
+    domain: p.domain ?? null,
+    market: marketOf(p.country),
+    stage: lifecycleKey(p.lifecyclestage),
+    sources: p.lead_sources ? p.lead_sources.split(';').filter(Boolean).map(sourceLabel) : [NOT_SET],
+    outreach: outreachKey(p.instantly_company_status),
+    industry: p.wc_industry_bucket || NOT_SET,
+    priority: priorityLabel(p.company_priority_manual),
+    created: day(p.createdate),
+    contacted: day(p.instantly_last_contacted_at),
+  };
+}
+
+export function toContactRow(p: Props, companies: Map<string, CompanyRow>): ContactRow {
+  const company = p.associatedcompanyid ? companies.get(p.associatedcompanyid) : undefined;
+  const own = marketOf(p.country);
+  return {
+    market: own !== UNKNOWN_COUNTRY ? own : company?.market ?? UNKNOWN_COUNTRY,
+    outcome: outcomeKey(p.instantly_status, p.instantly_unsubscribed === 'true'),
+    campaign: p.instantly_campaign_name || NOT_SET,
+    mailbox: (p.instantly_email_account || NOT_SET).toLowerCase(),
+    lastSent: day(p.instantly_last_email_sent_at),
+    industry: company?.industry ?? NOT_SET,
+    priority: company?.priority ?? NOT_SET,
+    companyId: p.associatedcompanyid ?? null,
+  };
+}
+
+export const isReached = (c: CompanyRow) => !!c.contacted || REACHED_OUTREACH.includes(c.outreach);
+export const isResearched = (c: CompanyRow) => RESEARCHED_OUTREACH.includes(c.outreach);
+
+// ---------------------------------------------------------------- Data space
+
+export interface DataSpaceFilters {
+  market: string | null;
+  from: string | null; // yyyy-mm-dd
+  prevFrom: string | null;
+  grain: 'day' | 'week';
+  stage: string | null;
+  source: string | null;
+  outreach: string | null;
+  q: string;
+}
+
+export function dataSpace(s: HubspotSnapshot, f: DataSpaceFilters) {
+  const rows = f.market ? s.companies.filter(c => c.market === f.market) : s.companies;
+  const reached = rows.filter(isReached).length;
+  const researched = rows.filter(isResearched).length;
+  const stage = count(rows, c => c.stage);
+  const added = rows.filter(c => inRange(c.created, f.from)).length;
+  const addedPrev = f.from ? rows.filter(c => inRange(c.created, f.prevFrom, f.from)).length : null;
+
+  const kpis: Record<string, Kpi> = {
+    target: { value: rows.length, hint: 'HubSpot companies with Record type = Leads for outbound (investor records excluded).' },
+    contacts: { value: f.market ? null : s.outboundContacts, hint: f.market ? 'Contact totals are not split by market.' : 'HubSpot contacts with Record type = Leads for outbound.' },
+    added: { value: f.from ? added : rows.length, previous: addedPrev, hint: 'Target companies created in HubSpot during the period.' },
+    researched: { value: researched, hint: 'Companies whose research is done (and any that went further).' },
+    reached: { value: reached, hint: 'Companies with at least one contact emailed through Instantly.' },
+    reachedRate: { value: rate(reached, rows.length), format: 'percent', hint: 'Reached out ÷ target companies.' },
+    customers: { value: stage.get('customer') ?? 0, hint: 'Lifecycle stage = Customer.' },
+  };
+
+  const table = rows
+    .filter(c => (!f.stage || c.stage === f.stage) && (!f.source || c.sources.includes(f.source)) && (!f.outreach || c.outreach === f.outreach))
+    .filter(c => !f.q || c.name.toLowerCase().includes(f.q.toLowerCase()) || (c.domain ?? '').toLowerCase().includes(f.q.toLowerCase()))
+    .sort((a, b) => (b.created ?? '').localeCompare(a.created ?? ''));
+
+  return {
+    kpis,
+    lifecycle: [...ordered(stage, LIFECYCLE), ...(stage.get('other') ? [{ key: 'other', label: 'Other', value: stage.get('other')! }] : [])],
+    outreach: ordered(count(rows, c => c.outreach), OUTREACH),
+    sources: toBuckets(count(rows, c => c.sources), [NOT_SET]),
+    markets: toBuckets(count(rows, c => c.market), ['Other', UNKNOWN_COUNTRY]),
+    industries: toBuckets(count(rows, c => c.industry), ['Other', NOT_SET]),
+    priorities: toBuckets(count(rows, c => c.priority), ['Unclassified', NOT_SET]),
+    growth: trend(rows.filter(c => c.created && inRange(c.created, f.from)).map(c => ({ t: c.created!, value: 1 })), f.grain),
+    table,
+  };
+}
+
+// ---------------------------------------------------------------- Outbound email (HubSpot side)
+
+export interface RateRow {
+  label: string;
+  reached: number;
+  replied: number;
+  bounced: number;
+}
+
+function rateRows(rows: ContactRow[], key: (c: ContactRow) => string, last: string[] = []): RateRow[] {
+  const m = new Map<string, RateRow>();
+  for (const c of rows) {
+    const k = key(c);
+    const r = m.get(k) ?? { label: k, reached: 0, replied: 0, bounced: 0 };
+    r.reached++;
+    if (c.outcome === 'replied') r.replied++;
+    if (c.outcome === 'bounced') r.bounced++;
+    m.set(k, r);
+  }
+  return [...m.values()].sort((a, b) => Number(last.includes(a.label)) - Number(last.includes(b.label)) || b.reached - a.reached);
+}
+
+export function emailAudience(s: HubspotSnapshot, f: { market: string | null; from: string | null }) {
+  const companies = f.market ? s.companies.filter(c => c.market === f.market) : s.companies;
+  // A contact counts in the period when its latest email went out in the period.
+  const contacts = s.contacts.filter(c => (!f.market || c.market === f.market) && (!f.from || inRange(c.lastSent, f.from)));
+  return {
+    targetCompanies: companies.length,
+    reachedCompanies: companies.filter(isReached).length,
+    contacts: contacts.length,
+    replied: contacts.filter(c => c.outcome === 'replied').length,
+    outcome: ordered(count(contacts, c => c.outcome), OUTCOME),
+    markets: rateRows(contacts, c => c.market, ['Other', UNKNOWN_COUNTRY]),
+    industries: rateRows(contacts, c => c.industry, ['Other', NOT_SET]),
+    priorities: rateRows(contacts, c => c.priority, ['Unclassified', NOT_SET]),
+    mailboxes: count(contacts, c => c.mailbox),
+    lastSent: s.contacts.reduce<string | null>((a, c) => (c.lastSent && (!a || c.lastSent > a) ? c.lastSent : a), null),
+  };
+}
+
+/** Inclusive Instantly date window for a filter period. */
+export function instantlyWindow(from: Date | null, now: Date) {
+  return { start: from ? isoDay(from) : undefined, end: isoDay(addDays(now, 1)) };
+}
+
+// ---------------------------------------------------------------- Compact snapshot
+// Next's data cache refuses entries over 2MB; ~10k company rows as plain objects are ~3.6MB.
+// Repeated values (market, stage, industry, campaign…) go into one shared list and rows keep indices.
+
+type PackedRow = (string | number | null | number[])[];
+export interface PackedSnapshot {
+  v: 1;
+  dict: string[];
+  companies: PackedRow[];
+  contacts: PackedRow[];
+  outboundContacts: number;
+  portalId: string | null;
+}
+
+export function packSnapshot(s: HubspotSnapshot): PackedSnapshot {
+  const dict: string[] = [];
+  const index = new Map<string, number>();
+  const d = (v: string) => {
+    let i = index.get(v);
+    if (i === undefined) { i = dict.length; dict.push(v); index.set(v, i); }
+    return i;
+  };
+  return {
+    v: 1,
+    dict,
+    companies: s.companies.map(c => [
+      c.id, c.name, c.domain, d(c.market), d(c.stage), c.sources.map(d), d(c.outreach), d(c.industry), d(c.priority), c.created, c.contacted,
+    ]),
+    contacts: s.contacts.map(c => [
+      d(c.market), d(c.outcome), d(c.campaign), d(c.mailbox), c.lastSent, d(c.industry), d(c.priority), c.companyId,
+    ]),
+    outboundContacts: s.outboundContacts,
+    portalId: s.portalId,
+  };
+}
+
+export function unpackSnapshot(p: PackedSnapshot): HubspotSnapshot {
+  const w = (i: unknown) => p.dict[i as number];
+  return {
+    companies: p.companies.map(r => ({
+      id: r[0] as string,
+      name: r[1] as string,
+      domain: r[2] as string | null,
+      market: w(r[3]),
+      stage: w(r[4]) as LifecycleKey,
+      sources: (r[5] as number[]).map(w),
+      outreach: w(r[6]) as OutreachKey,
+      industry: w(r[7]),
+      priority: w(r[8]),
+      created: r[9] as string | null,
+      contacted: r[10] as string | null,
+    })),
+    contacts: p.contacts.map(r => ({
+      market: w(r[0]),
+      outcome: w(r[1]) as OutcomeKey,
+      campaign: w(r[2]),
+      mailbox: w(r[3]),
+      lastSent: r[4] as string | null,
+      industry: w(r[5]),
+      priority: w(r[6]),
+      companyId: r[7] as string | null,
+    })),
+    outboundContacts: p.outboundContacts,
+    portalId: p.portalId,
+  };
+}

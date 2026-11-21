@@ -6,6 +6,8 @@ import { requireViewer } from '@/lib/session';
 import { exportOutboundCompanies, exportOutboundJobs } from '@/lib/queries/outbound';
 import { exportPublishedJobs } from '@/lib/queries/published';
 import { exportApplications } from '@/lib/queries/applications';
+import { exportDataCompanies } from '@/lib/queries/dataspace';
+import { exportCampaigns } from '@/lib/queries/email';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -15,6 +17,8 @@ const DATASETS = {
   'outbound-companies': exportOutboundCompanies,
   'published-jobs': exportPublishedJobs,
   applications: exportApplications,
+  'data-companies': exportDataCompanies,
+  'email-campaigns': exportCampaigns,
 } as const;
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ dataset: string }> }) {

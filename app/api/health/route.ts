@@ -1,3 +1,5 @@
+import { hsCount } from '@/lib/hubspot';
+import { instantly } from '@/lib/instantly';
 import { NextResponse } from 'next/server';
 import { gtm } from '@/lib/db/gtm';
 import { jd } from '@/lib/db/jd';
@@ -38,6 +40,20 @@ export async function GET() {
     probe('gtm', gtm, 'job_scan_runs', 'UPDATE job_scan_runs SET notes = notes WHERE false'),
     probe('jd', jd, 'chat_interactions', 'UPDATE chat_interactions SET name = name WHERE false'),
   ]);
-  const ok = results.every(r => r.reachable && 'rightProject' in r && r.rightProject && r.readOnly);
-  return NextResponse.json({ ok, results }, { status: ok ? 200 : 503 });
+  // External read-only APIs: just "does the key work".
+  const api = async (name: string, fn: () => Promise<unknown>) => {
+    const t0 = Date.now();
+    try {
+      await fn();
+      return { name, reachable: true, ms: Date.now() - t0 };
+    } catch (e) {
+      return { name, reachable: false, error: (e as Error).message, ms: Date.now() - t0 };
+    }
+  };
+  const apis = await Promise.all([
+    api('hubspot', () => hsCount('companies', [{ propertyName: 'record_type', operator: 'HAS_PROPERTY' }])),
+    api('instantly', () => instantly('/campaigns', { limit: 1 })),
+  ]);
+  const ok = results.every(r => r.reachable && 'rightProject' in r && r.rightProject && r.readOnly) && apis.every(a => a.reachable);
+  return NextResponse.json({ ok, results: [...results, ...apis] }, { status: ok ? 200 : 503 });
 }

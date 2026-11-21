@@ -45,7 +45,7 @@ export function Topbar({
   return (
     <header className="sticky top-0 z-30 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
       <div className="flex min-h-16 flex-wrap items-center gap-3 px-4 py-3 md:px-6">
-        {/* The three-way section toggle, plus Overview */}
+        {/* Section toggle: icons below xl (the sidebar carries the labels), labels from xl up */}
         <nav aria-label="Sections" className="flex items-center rounded-lg border bg-card p-1 shadow-sm">
           {[OVERVIEW, ...SECTIONS].map(item => {
             const active = isActive(pathname, item.href);
@@ -62,7 +62,7 @@ export function Topbar({
                 )}
               >
                 <Icon className="h-4 w-4" />
-                <span className={cn(item.href === '/' ? 'sr-only xl:not-sr-only' : 'hidden sm:inline')}>{item.short}</span>
+                <span className="sr-only 2xl:not-sr-only">{item.short}</span>
               </Link>
             );
           })}

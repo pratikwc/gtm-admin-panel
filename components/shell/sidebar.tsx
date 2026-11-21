@@ -58,7 +58,7 @@ export function Sidebar() {
           <Item item={OVERVIEW} pathname={pathname} query={query} />
         </div>
         <div>
-          <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Collections</div>
+          <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Marketing funnel</div>
           <div className="space-y-1">
             {SECTIONS.map(s => (
               <Item key={s.href} item={s} pathname={pathname} query={query} />

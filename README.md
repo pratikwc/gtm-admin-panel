@@ -22,10 +22,10 @@ Copy `.env.example` → `.env`. Without `AUTH_GOOGLE_ID` the panel runs with log
 ## Deploy (Vercel)
 
 1. Import this folder as a project. Framework: Next.js.
-2. Env vars: `GTM_SUPABASE_DB_URL`, `JD_SUPABASE_DB_URL` (use the **transaction pooler, port 6543**), `JD_SUPABASE_URL`, `JD_SUPABASE_SERVICE_ROLE_KEY`, `JD_SITE_URL`, `AUTH_SECRET` (`npx auth secret`), `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `ALLOWED_EMAIL_DOMAIN=whitecarrot.io`.
+2. Env vars: `GTM_SUPABASE_DB_URL`, `JD_SUPABASE_DB_URL` (use the **transaction pooler, port 6543**), `JD_SUPABASE_URL`, `JD_SUPABASE_SERVICE_ROLE_KEY`, `JD_SITE_URL`, `AUTH_SECRET` (`npx auth secret`), `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `ALLOWED_EMAIL_DOMAIN=whitecarrot.io`, `HUBSPOT_ACCESS_TOKEN` (private app with companies + contacts **read** scopes), `INSTANTLY_API_KEY` (or the older lowercase `instantly_api_key`).
 3. Google OAuth client: authorised redirect URI `https://<your-domain>/api/auth/callback/google`.
 
-Don't upload the other keys in the local `.env` (Apify, HubSpot, OpenAI…). The panel doesn't use them.
+The panel reads HubSpot (Data space, Reached out) and Instantly (Outbound email) through their APIs, read-only. It doesn't use the other keys in the local `.env` (Apify, OpenAI…).
 
 ## How it's built
 
