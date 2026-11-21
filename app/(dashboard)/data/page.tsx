@@ -10,6 +10,8 @@ import {
 import { getCompanyDetail, getDataSpace, getSyncStatus } from '@/lib/queries/dataspace';
 import { Panel, SectionHeader } from '@/components/charts/panel';
 import { TrendChart } from '@/components/charts/trend-chart';
+import { MarketMap } from '@/components/charts/market-map';
+import { MAP_MARKETS, marketMapGeometry } from '@/lib/geo';
 import { StatusChip, type ChipTone } from '@/components/charts/status-chip';
 import { FreshnessChip } from '@/components/shell/freshness';
 import { DataAsOf } from '@/components/shell/data-as-of';
@@ -99,6 +101,14 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
           </div>
         }
       >
+        {by === 'market' && (
+          <MarketMap
+            geo={marketMapGeometry()}
+            rows={ds.breakdown.market}
+            active={f.market}
+            hrefs={Object.fromEntries(MAP_MARKETS.map(m => [m, hrefWith(PATH, sp, { market: f.market === m ? null : m })]))}
+          />
+        )}
         <BreakdownTable
           rows={ds.breakdown[by]}
           hrefFor={r => {
