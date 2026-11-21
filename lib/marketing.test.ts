@@ -98,9 +98,9 @@ describe('dataSpace', () => {
     expect(d.table.map(c => c.id)).toEqual(['3']);
   });
 
-  it('only counts a lifecycle move as converted when we reached the company', () => {
-    expect(funnelStep(company('9', { lifecyclestage: 'opportunity' }))).toBe('data');
-    expect(funnelStep(company('9', { lifecyclestage: 'opportunity', instantly_last_contacted_at: '2026-11-01' }))).toBe('converted');
+  it('counts only email replies as converted, not lifecycle stages', () => {
+    expect(funnelStep(company('9', { lifecyclestage: 'opportunity', instantly_last_contacted_at: '2026-11-01' }))).toBe('reached');
+    expect(funnelStep(company('9', { instantly_any_contact_replied: 'true', instantly_last_contacted_at: '2026-11-01' }))).toBe('converted');
   });
 });
 

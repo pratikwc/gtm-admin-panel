@@ -4,7 +4,7 @@ import { parseFilters, type SearchParams } from '@/lib/filters';
 import { fmtAgo, fmtDate, fmtInt, fmtPct } from '@/lib/format';
 import { freshness, type Health } from '@/lib/health';
 import { getPipelineSnapshot } from '@/lib/queries/pipeline';
-import { getHubspotSnapshot } from '@/lib/queries/dataspace';
+import { getHubspotSnapshot, getSyncStatus } from '@/lib/queries/dataspace';
 import { funnelCounts } from '@/lib/marketing';
 import { Panel, SectionHeader } from '@/components/charts/panel';
 import { StatusChip, type ChipTone } from '@/components/charts/status-chip';
@@ -20,37 +20,28 @@ const WORD: Record<Health, string> = { ok: 'On schedule', warn: 'Late', bad: 'St
 export default async function OverviewPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const sp = await searchParams;
   const f = parseFilters(sp);
-  const [{ data: p, fetchedAt }, hub] = await Promise.all([
+  const [{ data: p, fetchedAt }, hub, gtmSync] = await Promise.all([
     getPipelineSnapshot(f.from?.toISOString() ?? null),
-    // Separate source: if HubSpot is down, the rest of Overview still renders.
+    // Separate sources: if HubSpot or the research table is down, the rest of Overview still renders.
     getHubspotSnapshot().then(r => r.data).catch(() => null),
+    getSyncStatus().then(r => r.data).catch(() => null),
   ]);
   const qs = new URLSearchParams();
   if (f.range !== '90d') qs.set('range', f.range);
   const keep = qs.size ? `?${qs}` : '';
   const top = Math.max(...p.funnel.slice(0, 5).map(s => s.value), 1);
   const syncAt = p.latestJdUpdate ?? p.lastSyncAt;
+  const latest = <T,>(rows: T[] | undefined, pick: (r: T) => string | null) =>
+    (rows ?? []).reduce<string | null>((a, r) => { const v = pick(r); return v && (!a || v > a) ? v : a; }, null);
 
+  // In the order work flows: research, outreach, then the jobs pipeline, then new data arriving.
   const health: { label: string; detail: string; at: string | null; href: string }[] = [
+    { label: 'Company research', detail: 'Latest research brief written (GTM Supabase)', at: gtmSync?.last_researched ?? null, href: '/data?step=researched#table' },
+    { label: 'Outbound email', detail: 'Latest Instantly email recorded on a HubSpot contact', at: latest(hub?.contacts, c => c.lastSent), href: '/reached' },
     { label: 'GTM job scans', detail: 'Apify LinkedIn scrape (location + company scans)', at: p.lastScanAt, href: '/outbound' },
     { label: 'GTM → Jobs Duniya sync', detail: 'Vercel cron that copies jobs into JD', at: syncAt, href: '/published' },
     { label: 'Candidate submissions', detail: 'Jobs Duniya form', at: p.latestApplicationAt, href: '/applications' },
-    ...(hub
-      ? [
-          {
-            label: 'New companies in HubSpot',
-            detail: 'Newest target company created (Supabase sync and manual adds)',
-            at: hub.companies.reduce<string | null>((a, c) => (c.created && (!a || c.created > a) ? c.created : a), null),
-            href: '/data',
-          },
-          {
-            label: 'Outbound email',
-            detail: 'Latest Instantly email recorded on a HubSpot contact',
-            at: hub.contacts.reduce<string | null>((a, c) => (c.lastSent && (!a || c.lastSent > a) ? c.lastSent : a), null),
-            href: '/reached',
-          },
-        ]
-      : []),
+    { label: 'New companies in HubSpot', detail: 'Newest target company created (Supabase sync and manual adds)', at: latest(hub?.companies, c => c.created), href: '/data' },
   ];
 
   const fc = hub ? funnelCounts(hub.companies) : null;
@@ -59,7 +50,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         { key: 'data', label: 'Data', value: fc.data, hint: 'Target companies in HubSpot', href: '/data' },
         { key: 'researched', label: 'Researched', value: fc.researched, hint: 'Company research done', href: '/data?step=researched#table' },
         { key: 'reached', label: 'Reached out', value: fc.reached, hint: 'At least one contact emailed', href: '/reached' },
-        { key: 'converted', label: 'Converted', value: fc.converted, hint: 'Replied, or now an Opportunity', href: '/data?step=converted#table' },
+        { key: 'converted', label: 'Converted', value: fc.converted, hint: 'A contact replied to our email', href: '/data?step=converted#table' },
       ]
     : null;
 

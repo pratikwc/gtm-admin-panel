@@ -10,7 +10,7 @@ import type { Filters } from '../filters';
 
 const COMPANY_PROPS = [
   'name', 'domain', 'country', 'lifecyclestage', 'lead_sources', 'instantly_company_status',
-  'instantly_last_contacted_at', 'wc_industry_bucket', 'company_priority_manual', 'createdate',
+  'instantly_last_contacted_at', 'instantly_any_contact_replied', 'wc_industry_bucket', 'company_priority_manual', 'createdate',
 ];
 const CONTACT_PROPS = [
   'country', 'associatedcompanyid', 'instantly_status', 'instantly_unsubscribed', 'instantly_campaign_name',
@@ -49,7 +49,7 @@ function dedupe(records: HsRecord[]) {
 }
 
 // Stored packed (shared value list + indices) to stay under Next's 2MB cache entry limit.
-const packedSnapshot = cached('hubspot-snapshot-v3', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
+const packedSnapshot = cached('hubspot-snapshot-v4', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
 
 export async function getHubspotSnapshot(): Promise<{ data: HubspotSnapshot; fetchedAt: string }> {
   const r = await packedSnapshot();
@@ -71,18 +71,19 @@ export async function getDataSpace(f: Filters, extra: { step: string | null; sou
 
 /** Companies that landed in Supabase (GTM) and whether they reached HubSpot yet. */
 async function syncStatus() {
-  const [r] = await gtm<{ total: number; linked: number; waiting: number; new_30d: number; last_added: string | null; last_hs_read: string | null }>(
+  const [r] = await gtm<{ total: number; linked: number; waiting: number; new_30d: number; last_added: string | null; last_hs_read: string | null; last_researched: string | null }>(
     `SELECT count(*)::int AS total,
             count(hubspot_company_id)::int AS linked,
             (count(*) - count(hubspot_company_id))::int AS waiting,
             count(*) FILTER (WHERE created_at > now() - interval '30 days')::int AS new_30d,
             max(created_at)::text AS last_added,
-            max(hs_read_at)::text AS last_hs_read
+            max(hs_read_at)::text AS last_hs_read,
+            (SELECT max(researched_at)::text FROM research_briefs) AS last_researched
        FROM companies`,
   );
   return r;
 }
-export const getSyncStatus = cached('gtm-hubspot-sync-v1', 'pipeline', syncStatus);
+export const getSyncStatus = cached('gtm-hubspot-sync-v2', 'pipeline', syncStatus);
 
 export async function getCompanyDetail(id: string) {
   const r = await hsGet('companies', id, [

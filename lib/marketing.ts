@@ -214,7 +214,8 @@ export function toCompanyRow(id: string, p: Props): CompanyRow {
     market: marketOf(p.country),
     stage: lifecycleKey(p.lifecyclestage),
     sources: p.lead_sources ? p.lead_sources.split(';').filter(Boolean).map(sourceLabel) : [NOT_SET],
-    outreach: outreachKey(p.instantly_company_status),
+    // Either flag counts as a reply: the company status lags behind the per-contact flag.
+    outreach: p.instantly_any_contact_replied === 'true' ? 'replied' : outreachKey(p.instantly_company_status),
     industry: p.wc_industry_bucket || NOT_SET,
     priority: priorityLabel(p.company_priority_manual),
     created: day(p.createdate),
@@ -247,13 +248,13 @@ export const FUNNEL = [
   { key: 'data', label: 'Data', status: 'Not researched', hint: 'Target companies in HubSpot (Record type = Leads for outbound).' },
   { key: 'researched', label: 'Researched', status: 'Researched', hint: 'Company research is done, including every company that went further.' },
   { key: 'reached', label: 'Reached out', status: 'Reached out', hint: 'At least one contact emailed through Instantly.' },
-  { key: 'converted', label: 'Converted', status: 'Converted', hint: 'Reached out, and a contact replied or the company became an Opportunity in HubSpot.' },
+  { key: 'converted', label: 'Converted', status: 'Converted', hint: 'Reached out, and a contact replied to our email.' },
 ] as const;
 export type FunnelKey = (typeof FUNNEL)[number]['key'];
 
-// HubSpot's "Lead" stage is set when outreach starts (260 of 572 were emailed, 13 replied), so it is not a conversion.
-const CONVERTED_STAGES: LifecycleKey[] = ['opportunity', 'customer'];
-export const isConverted = (c: CompanyRow) => isReached(c) && (c.outreach === 'replied' || CONVERTED_STAGES.includes(c.stage));
+// Converted = replied to our email. Lifecycle stages aren't used: HubSpot's "Lead" is set when outreach starts,
+// and Opportunities also come from calls, with nothing in HubSpot saying which channel created them.
+export const isConverted = (c: CompanyRow) => isReached(c) && c.outreach === 'replied';
 
 /** Furthest step a company has reached. */
 export function funnelStep(c: CompanyRow): FunnelKey {
