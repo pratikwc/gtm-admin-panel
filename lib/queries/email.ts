@@ -15,11 +15,9 @@ export interface CampaignRow {
   statusLabel: string;
   group: CampaignGroup;
   created: string;
-  opensTracked: boolean;
   leads: number;
   contacted: number;
   sent: number;
-  opened: number;
   replied: number;
   bounced: number;
   unsubscribed: number;
@@ -36,12 +34,9 @@ function row(c: InstantlyCampaign, a: InstantlyCampaignAnalytics | undefined): C
     statusLabel: st.label,
     group: st.group,
     created: c.timestamp_created,
-    // Zero opens across 100+ sends means the tracking pixel isn't firing (e.g. plain-text emails), not that nobody opened.
-    opensTracked: c.open_tracking !== false && ((a?.open_count_unique ?? 0) > 0 || (a?.emails_sent_count ?? 0) < 100),
     leads: a?.leads_count ?? 0,
     contacted: a?.contacted_count ?? 0,
     sent: a?.emails_sent_count ?? 0,
-    opened: a?.open_count_unique ?? 0,
     replied: a?.reply_count_unique ?? 0,
     bounced: a?.bounced_count ?? 0,
     unsubscribed: a?.unsubscribed_count ?? 0,
@@ -69,7 +64,6 @@ async function summary(fromIso: string | null, prevFromIso: string | null, days:
   const byId = new Map(analytics.map(a => [a.campaign_id, a]));
   const rows = campaigns.map(c => row(c, byId.get(c.id))).sort((a, b) => b.sent - a.sent || b.created.localeCompare(a.created));
   const prevRows = prevAnalytics ? campaigns.map(c => row(c, prevAnalytics.find(a => a.campaign_id === c.id))) : null;
-  const opensTracked = rows.some(r => r.opensTracked && r.sent > 0);
 
   const k = (key: keyof CampaignRow) => ({ value: sum(rows, key), previous: prevRows ? sum(prevRows, key) : null });
   const pct = (n: keyof CampaignRow, d: keyof CampaignRow): Kpi => ({
@@ -87,15 +81,11 @@ async function summary(fromIso: string | null, prevFromIso: string | null, days:
     kpis: {
       sent: { ...k('sent'), hint: 'Emails Instantly sent in the period, all steps.' } as Kpi,
       contacted: { ...k('contacted'), hint: 'People who received at least one email in the period.' } as Kpi,
-      openRate: opensTracked
-        ? ({ ...pct('opened', 'contacted'), hint: 'Unique opens ÷ people reached.' } as Kpi)
-        : ({ value: null, hint: 'Instantly recorded no opens, so tracking is off or not firing (common with plain-text emails). Opens are not measured.' } as Kpi),
       replyRate: { ...pct('replied', 'contacted'), hint: 'Unique human replies ÷ people reached (auto-replies excluded).' } as Kpi,
       opportunities: { ...k('opportunities'), hint: 'Leads marked as an opportunity in Instantly.' } as Kpi,
       bounceRate: { ...pct('bounced', 'sent'), hint: 'Bounces ÷ emails sent. Keep under 2%.' } as Kpi,
     },
     totals: { sent: sum(rows, 'sent'), contacted: sum(rows, 'contacted'), replied: sum(rows, 'replied'), bounced: sum(rows, 'bounced') },
-    opensTracked,
     grain,
     sentTrend: series(d => d.sent),
     replyTrend: series(d => d.unique_replies),
@@ -111,7 +101,7 @@ async function summary(fromIso: string | null, prevFromIso: string | null, days:
   };
 }
 
-const summaryCached = cached('email-summary-v3', 'email', summary);
+const summaryCached = cached('email-summary-v4', 'email', summary);
 
 export function getEmailSummary(f: Filters) {
   return summaryCached(f.from?.toISOString().slice(0, 10) ?? null, f.prevFrom?.toISOString().slice(0, 10) ?? null, f.days);
@@ -132,11 +122,11 @@ async function campaign(id: string, fromIso: string | null, days: number | null)
     grain: grainFor(days),
     steps: steps
       .filter(s => s.step != null)
-      .map(s => ({ step: Number(s.step), variant: Number(s.variant ?? 0), sent: s.sent, replied: s.unique_replies, auto: s.unique_replies_automatic ?? 0, opened: s.unique_opened }))
+      .map(s => ({ step: Number(s.step), variant: Number(s.variant ?? 0), sent: s.sent, replied: s.unique_replies, auto: s.unique_replies_automatic ?? 0 }))
       .sort((a, b) => a.step - b.step || a.variant - b.variant),
   };
 }
-const campaignCached = cached('email-campaign-v3', 'email', campaign);
+const campaignCached = cached('email-campaign-v4', 'email', campaign);
 
 export async function getCampaign(id: string, f: Filters) {
   try {

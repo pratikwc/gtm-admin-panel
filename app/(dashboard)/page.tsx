@@ -5,7 +5,7 @@ import { fmtAgo, fmtDate, fmtInt, fmtPct } from '@/lib/format';
 import { freshness, type Health } from '@/lib/health';
 import { getPipelineSnapshot } from '@/lib/queries/pipeline';
 import { getHubspotSnapshot } from '@/lib/queries/dataspace';
-import { isReached } from '@/lib/marketing';
+import { funnelCounts } from '@/lib/marketing';
 import { Panel, SectionHeader } from '@/components/charts/panel';
 import { StatusChip, type ChipTone } from '@/components/charts/status-chip';
 import { DataAsOf } from '@/components/shell/data-as-of';
@@ -53,13 +53,13 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       : []),
   ];
 
-  const marketing = hub
+  const fc = hub ? funnelCounts(hub.companies) : null;
+  const marketing = fc
     ? [
-        { key: 'target', label: 'Target companies', value: hub.companies.length, hint: 'Outbound records in HubSpot', href: '/data' },
-        { key: 'reached', label: 'Reached out', value: hub.companies.filter(isReached).length, hint: 'At least one contact emailed', href: '/reached' },
-        { key: 'replied', label: 'Replied', value: hub.companies.filter(c => c.outreach === 'replied').length, hint: 'A contact replied', href: '/reached' },
-        { key: 'opportunity', label: 'Opportunity', value: hub.companies.filter(c => c.stage === 'opportunity').length, hint: 'HubSpot lifecycle stage', base: 0, href: '/data?stage=opportunity#table' },
-        { key: 'customer', label: 'Customer', value: hub.companies.filter(c => c.stage === 'customer').length, hint: 'HubSpot lifecycle stage', base: 0, href: '/data?stage=customer#table' },
+        { key: 'data', label: 'Data', value: fc.data, hint: 'Target companies in HubSpot', href: '/data' },
+        { key: 'researched', label: 'Researched', value: fc.researched, hint: 'Company research done', href: '/data?step=researched#table' },
+        { key: 'reached', label: 'Reached out', value: fc.reached, hint: 'At least one contact emailed', href: '/reached' },
+        { key: 'converted', label: 'Converted', value: fc.converted, hint: 'Replied, or now an Opportunity', href: '/data?step=converted#table' },
       ]
     : null;
 
@@ -75,11 +75,10 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       <JdApiBanner />
 
       {marketing && (
-        <Panel className="mb-4" title="Marketing funnel" description="Target companies in HubSpot and how far outreach has got with them (all time). Click a stage to open it.">
-          <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <Panel className="mb-4" title="Marketing funnel" description="How much data we have, how much is researched, how many we reached out to, and how many converted. Click a step to open it.">
+          <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {marketing.map((s, i) => {
-              // Reached out and Replied are nested in the step before; lifecycle stages are not, so they compare to the total.
-              const prev = i === 0 ? null : 'base' in s && s.base != null ? marketing[s.base] : marketing[i - 1];
+              const prev = i === 0 ? null : marketing[i - 1];
               const conv = prev?.value ? s.value / prev.value : null;
               return (
                 <li key={s.key}>

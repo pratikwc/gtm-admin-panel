@@ -33,7 +33,6 @@ const GROUP_COLOR: Record<CampaignGroup, string> = {
 const GROUP_TONE: Record<CampaignGroup, ChipTone> = { active: 'good', paused: 'warn', completed: 'info', draft: 'neutral', attention: 'bad' };
 const OUTCOME_COLOR: Record<OutcomeKey, string> = {
   sent: 'var(--ord-2)',
-  opened: 'var(--ord-4)',
   replied: 'var(--status-good)',
   bounced: 'var(--status-critical)',
   unsubscribed: 'var(--status-warning)',
@@ -217,7 +216,7 @@ export default async function OutboundEmailPage({ searchParams }: { searchParams
           <div className="border-b px-4 py-2.5">
             <FilterPills options={CAMPAIGN_GROUPS.map(g => ({ value: g.key, label: g.label }))} />
           </div>
-          <CampaignTable rows={campaigns} opensTracked={em.opensTracked} />
+          <CampaignTable rows={campaigns} />
         </section>
       )}
 
@@ -225,7 +224,6 @@ export default async function OutboundEmailPage({ searchParams }: { searchParams
         <DetailSheet param="campaign" title={detail.row.name} subtitle={`Created ${fmtDate(detail.row.created)} · figures for the selected period`}>
           <div className="mb-5 flex flex-wrap gap-2">
             <StatusChip tone={GROUP_TONE[detail.row.group]}>{detail.row.statusLabel}</StatusChip>
-            {!detail.row.opensTracked && <StatusChip tone="neutral">Opens not recorded</StatusChip>}
           </div>
           <DetailGrid
             items={[
@@ -317,7 +315,7 @@ function Mailboxes({ accounts, sends }: { accounts: { email: string; status: num
   );
 }
 
-function CampaignTable({ rows, opensTracked }: { rows: CampaignRow[]; opensTracked: boolean }) {
+function CampaignTable({ rows }: { rows: CampaignRow[] }) {
   if (!rows.length) return <p className="px-4 py-10 text-center text-sm text-muted-foreground">No campaigns match this filter.</p>;
   return (
     <div className="overflow-x-auto">
@@ -329,7 +327,6 @@ function CampaignTable({ rows, opensTracked }: { rows: CampaignRow[]; opensTrack
             <TableHead className="text-right">Leads</TableHead>
             <TableHead className="text-right">Reached</TableHead>
             <TableHead className="text-right">Sent</TableHead>
-            {opensTracked && <TableHead className="text-right">Open rate</TableHead>}
             <TableHead className="text-right">Replies</TableHead>
             <TableHead className="text-right">Reply rate</TableHead>
             <TableHead className="text-right">Bounce rate</TableHead>
@@ -349,7 +346,6 @@ function CampaignTable({ rows, opensTracked }: { rows: CampaignRow[]; opensTrack
                 <TableCell className="tabular text-right">{fmtInt(r.leads)}</TableCell>
                 <TableCell className="tabular text-right">{fmtInt(r.contacted)}</TableCell>
                 <TableCell className="tabular text-right">{fmtInt(r.sent)}</TableCell>
-                {opensTracked && <TableCell className="tabular text-right">{r.opensTracked ? fmtPct(rate(r.opened, r.contacted), 1) : '—'}</TableCell>}
                 <TableCell className="tabular text-right">{fmtInt(r.replied)}</TableCell>
                 <TableCell className="tabular text-right font-medium">{fmtPct(rate(r.replied, r.contacted), 1)}</TableCell>
                 <TableCell className={`tabular text-right ${bounce != null && bounce > 0.02 ? 'font-medium text-[var(--status-critical)]' : ''}`}>{fmtPct(bounce, 1)}</TableCell>

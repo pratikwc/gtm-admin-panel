@@ -3,7 +3,7 @@ import { cached } from '../cache';
 import { gtm } from '../db/gtm';
 import { hsCount, hsGet, hsPortalId, hsSearchAll, type HsRecord } from '../hubspot';
 import {
-  dataSpace, grainFor, isoDay, packSnapshot, toCompanyRow, toContactRow, unpackSnapshot,
+  dataSpace, FUNNEL, funnelStep, grainFor, isoDay, packSnapshot, toCompanyRow, toContactRow, unpackSnapshot,
   type CompanyRow, type HubspotSnapshot, type PackedSnapshot,
 } from '../marketing';
 import type { Filters } from '../filters';
@@ -49,14 +49,14 @@ function dedupe(records: HsRecord[]) {
 }
 
 // Stored packed (shared value list + indices) to stay under Next's 2MB cache entry limit.
-const packedSnapshot = cached('hubspot-snapshot-v2', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
+const packedSnapshot = cached('hubspot-snapshot-v3', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
 
 export async function getHubspotSnapshot(): Promise<{ data: HubspotSnapshot; fetchedAt: string }> {
   const r = await packedSnapshot();
   return { ...r, data: unpackSnapshot(r.data) };
 }
 
-export async function getDataSpace(f: Filters, extra: { stage: string | null; source: string | null; outreach: string | null }) {
+export async function getDataSpace(f: Filters, extra: { step: string | null; source: string | null }) {
   const { data, fetchedAt } = await getHubspotSnapshot();
   const ds = dataSpace(data, {
     market: f.market,
@@ -93,14 +93,13 @@ export async function getCompanyDetail(id: string) {
 }
 
 export async function exportDataCompanies(f: Filters) {
-  const ds = await getDataSpace(f, { stage: null, source: null, outreach: null });
+  const ds = await getDataSpace(f, { step: null, source: null });
   return ds.table.map(c => ({
     hubspot_id: c.id,
     company: c.name,
     domain: c.domain,
     market: c.market,
-    lifecycle_stage: c.stage,
-    outreach: c.outreach,
+    status: FUNNEL.find(st => st.key === funnelStep(c))!.status,
     sources: c.sources.join('; '),
     industry: c.industry,
     priority: c.priority,

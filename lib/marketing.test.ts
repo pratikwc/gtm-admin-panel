@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   campaignStatus, dataSpace, emailAudience, lifecycleKey, mailboxHealth, marketOf, outcomeKey, outreachKey, rate,
-  toCompanyRow, toContactRow, trend, type HubspotSnapshot,
+  funnelStep, toCompanyRow, toContactRow, trend, type HubspotSnapshot,
 } from './marketing';
 
 describe('vocabularies', () => {
@@ -19,6 +19,7 @@ describe('vocabularies', () => {
     expect(outreachKey('research_completed')).toBe('researched');
     expect(outreachKey('added_to_instantly_sequence')).toBe('in_sequence');
     expect(outreachKey('replied')).toBe('replied');
+    expect(outreachKey('opened')).toBe('in_sequence');
     expect(outreachKey(null)).toBe('not_researched');
   });
 
@@ -32,7 +33,7 @@ describe('vocabularies', () => {
 
   it('lets unsubscribed win over other email outcomes', () => {
     expect(outcomeKey('replied', true)).toBe('unsubscribed');
-    expect(outcomeKey('email_opened', false)).toBe('opened');
+    expect(outcomeKey('email_opened', false)).toBe('sent'); // opens aren't tracked reliably
     expect(outcomeKey('email_sent', false)).toBe('sent');
   });
 
@@ -79,21 +80,27 @@ function fixture(): HubspotSnapshot {
 }
 
 describe('dataSpace', () => {
-  it('counts target, reached, researched and stages', () => {
-    const d = dataSpace(fixture(), { market: null, from: '2026-11-01', prevFrom: '2026-10-01', grain: 'day', stage: null, source: null, outreach: null, q: '' });
-    expect(d.kpis.target.value).toBe(3);
-    expect(d.kpis.reached.value).toBe(1);
-    expect(d.kpis.researched.value).toBe(2);
-    expect(d.kpis.customers.value).toBe(1);
-    expect(d.kpis.added.value).toBe(2);
-    expect(d.sources.find(s => s.label === 'Job scan (Supabase)')?.value).toBe(1);
+  const base = { market: null, from: '2026-11-01', prevFrom: '2026-10-01', grain: 'day' as const, step: null, source: null, q: '' };
+
+  it('counts the four nested funnel steps', () => {
+    const d = dataSpace(fixture(), base);
+    // 1: replied + contacted -> converted; 2: customer, never reached -> data; 3: research done -> researched
+    expect(d.totals).toMatchObject({ data: 3, researched: 2, reached: 1, converted: 1 });
+    expect(d.funnel.map(s => s.value)).toEqual([3, 2, 1, 1]);
+    expect(d.added).toBe(2);
+    expect(d.breakdown.source.find(s => s.label === 'Job scan (Supabase)')?.converted).toBe(1);
     expect(d.table[0].id).toBe('3'); // newest first
   });
 
-  it('filters by market and table filters', () => {
-    const d = dataSpace(fixture(), { market: 'United Arab Emirates', from: null, prevFrom: null, grain: 'week', stage: null, source: null, outreach: 'researched', q: '' });
-    expect(d.kpis.target.value).toBe(2);
+  it('filters by market and by step', () => {
+    const d = dataSpace(fixture(), { ...base, from: null, prevFrom: null, market: 'United Arab Emirates', step: 'researched' });
+    expect(d.totals.data).toBe(2);
     expect(d.table.map(c => c.id)).toEqual(['3']);
+  });
+
+  it('only counts a lifecycle move as converted when we reached the company', () => {
+    expect(funnelStep(company('9', { lifecyclestage: 'opportunity' }))).toBe('data');
+    expect(funnelStep(company('9', { lifecyclestage: 'opportunity', instantly_last_contacted_at: '2026-11-01' }))).toBe('converted');
   });
 });
 

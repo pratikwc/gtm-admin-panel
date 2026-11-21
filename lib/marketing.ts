@@ -27,8 +27,7 @@ export function lifecycleKey(v: string | null | undefined): LifecycleKey {
 export const OUTREACH = [
   { key: 'not_researched', label: 'Not researched', hint: 'No research or contacts yet' },
   { key: 'researched', label: 'Researched', hint: 'Research done, not yet in a sequence' },
-  { key: 'in_sequence', label: 'In sequence', hint: 'Added to an Instantly campaign, no response yet' },
-  { key: 'opened', label: 'Opened', hint: 'A contact opened an email' },
+  { key: 'in_sequence', label: 'In sequence', hint: 'Added to an Instantly campaign, no reply yet' },
   { key: 'replied', label: 'Replied', hint: 'A contact replied' },
   { key: 'bounced', label: 'Bounced', hint: 'An email to a contact bounced' },
 ] as const;
@@ -40,8 +39,8 @@ export function outreachKey(v: string | null | undefined): OutreachKey {
     case 'research_completed':
       return 'researched';
     case 'added_to_instantly_sequence':
+    case 'opened': // opens aren't reliably tracked, so an open counts as still in sequence
       return 'in_sequence';
-    case 'opened':
     case 'replied':
     case 'bounced':
       return v;
@@ -50,7 +49,7 @@ export function outreachKey(v: string | null | undefined): OutreachKey {
   }
 }
 
-const REACHED_OUTREACH: OutreachKey[] = ['in_sequence', 'opened', 'replied', 'bounced'];
+const REACHED_OUTREACH: OutreachKey[] = ['in_sequence', 'replied', 'bounced'];
 const RESEARCHED_OUTREACH: OutreachKey[] = ['researched', ...REACHED_OUTREACH];
 
 /** HubSpot `lead_sources` values -> display labels. job-scan is our Supabase job scraper. */
@@ -102,8 +101,7 @@ export const campaignStatus = (code: number) => CAMPAIGN_STATUS[code] ?? { label
 
 /** Contact-level email outcome (HubSpot `instantly_status`, unsubscribed wins). */
 export const OUTCOME = [
-  { key: 'sent', label: 'No response yet' },
-  { key: 'opened', label: 'Opened' },
+  { key: 'sent', label: 'No reply yet' },
   { key: 'replied', label: 'Replied' },
   { key: 'bounced', label: 'Bounced' },
   { key: 'unsubscribed', label: 'Unsubscribed' },
@@ -114,7 +112,6 @@ export function outcomeKey(status: string | null | undefined, unsubscribed: bool
   if (unsubscribed) return 'unsubscribed';
   if (status === 'replied') return 'replied';
   if (status === 'bounced') return 'bounced';
-  if (status === 'email_opened') return 'opened';
   return 'sent';
 }
 
@@ -241,7 +238,64 @@ export function toContactRow(p: Props, companies: Map<string, CompanyRow>): Cont
 }
 
 export const isReached = (c: CompanyRow) => !!c.contacted || REACHED_OUTREACH.includes(c.outreach);
-export const isResearched = (c: CompanyRow) => RESEARCHED_OUTREACH.includes(c.outreach);
+export const isResearched = (c: CompanyRow) => RESEARCHED_OUTREACH.includes(c.outreach) || isReached(c);
+
+// ---------------------------------------------------------------- Pre-sales funnel
+
+/** The four questions Data space answers, in order. Each step is a subset of the one before. */
+export const FUNNEL = [
+  { key: 'data', label: 'Data', status: 'Not researched', hint: 'Target companies in HubSpot (Record type = Leads for outbound).' },
+  { key: 'researched', label: 'Researched', status: 'Researched', hint: 'Company research is done, including every company that went further.' },
+  { key: 'reached', label: 'Reached out', status: 'Reached out', hint: 'At least one contact emailed through Instantly.' },
+  { key: 'converted', label: 'Converted', status: 'Converted', hint: 'Reached out, and a contact replied or the company became an Opportunity in HubSpot.' },
+] as const;
+export type FunnelKey = (typeof FUNNEL)[number]['key'];
+
+// HubSpot's "Lead" stage is set when outreach starts (260 of 572 were emailed, 13 replied), so it is not a conversion.
+const CONVERTED_STAGES: LifecycleKey[] = ['opportunity', 'customer'];
+export const isConverted = (c: CompanyRow) => isReached(c) && (c.outreach === 'replied' || CONVERTED_STAGES.includes(c.stage));
+
+/** Furthest step a company has reached. */
+export function funnelStep(c: CompanyRow): FunnelKey {
+  if (isConverted(c)) return 'converted';
+  if (isReached(c)) return 'reached';
+  if (isResearched(c)) return 'researched';
+  return 'data';
+}
+
+const STEP_RANK: Record<FunnelKey, number> = { data: 0, researched: 1, reached: 2, converted: 3 };
+
+export interface FunnelRow {
+  label: string;
+  data: number;
+  researched: number;
+  reached: number;
+  converted: number;
+}
+
+/** Cumulative step counts: a converted company also counts as researched and reached. */
+export function funnelCounts(rows: CompanyRow[]): FunnelRow {
+  const r: FunnelRow = { label: 'All', data: 0, researched: 0, reached: 0, converted: 0 };
+  for (const c of rows) {
+    const k = STEP_RANK[funnelStep(c)];
+    r.data++;
+    if (k >= 1) r.researched++;
+    if (k >= 2) r.reached++;
+    if (k >= 3) r.converted++;
+  }
+  return r;
+}
+
+function funnelRows(rows: CompanyRow[], key: (c: CompanyRow) => string | string[], last: string[]): FunnelRow[] {
+  const groups = new Map<string, CompanyRow[]>();
+  for (const c of rows) {
+    const k = key(c);
+    for (const one of Array.isArray(k) ? k : [k]) groups.set(one, [...(groups.get(one) ?? []), c]);
+  }
+  return [...groups.entries()]
+    .map(([label, g]) => ({ ...funnelCounts(g), label }))
+    .sort((a, b) => Number(last.includes(a.label)) - Number(last.includes(b.label)) || b.data - a.data);
+}
 
 // ---------------------------------------------------------------- Data space
 
@@ -250,43 +304,42 @@ export interface DataSpaceFilters {
   from: string | null; // yyyy-mm-dd
   prevFrom: string | null;
   grain: 'day' | 'week';
-  stage: string | null;
+  step: string | null;
   source: string | null;
-  outreach: string | null;
   q: string;
 }
 
+export const BREAKDOWNS = [
+  { key: 'market', label: 'Market' },
+  { key: 'source', label: 'Source' },
+  { key: 'industry', label: 'Industry' },
+  { key: 'priority', label: 'Priority' },
+] as const;
+export type BreakdownKey = (typeof BREAKDOWNS)[number]['key'];
+
 export function dataSpace(s: HubspotSnapshot, f: DataSpaceFilters) {
   const rows = f.market ? s.companies.filter(c => c.market === f.market) : s.companies;
-  const reached = rows.filter(isReached).length;
-  const researched = rows.filter(isResearched).length;
-  const stage = count(rows, c => c.stage);
-  const added = rows.filter(c => inRange(c.created, f.from)).length;
+  const totals = funnelCounts(rows);
+  const added = f.from ? rows.filter(c => inRange(c.created, f.from)).length : null;
   const addedPrev = f.from ? rows.filter(c => inRange(c.created, f.prevFrom, f.from)).length : null;
 
-  const kpis: Record<string, Kpi> = {
-    target: { value: rows.length, hint: 'HubSpot companies with Record type = Leads for outbound (investor records excluded).' },
-    contacts: { value: f.market ? null : s.outboundContacts, hint: f.market ? 'Contact totals are not split by market.' : 'HubSpot contacts with Record type = Leads for outbound.' },
-    added: { value: f.from ? added : rows.length, previous: addedPrev, hint: 'Target companies created in HubSpot during the period.' },
-    researched: { value: researched, hint: 'Companies whose research is done (and any that went further).' },
-    reached: { value: reached, hint: 'Companies with at least one contact emailed through Instantly.' },
-    reachedRate: { value: rate(reached, rows.length), format: 'percent', hint: 'Reached out ÷ target companies.' },
-    customers: { value: stage.get('customer') ?? 0, hint: 'Lifecycle stage = Customer.' },
-  };
-
   const table = rows
-    .filter(c => (!f.stage || c.stage === f.stage) && (!f.source || c.sources.includes(f.source)) && (!f.outreach || c.outreach === f.outreach))
+    .filter(c => (!f.step || funnelStep(c) === f.step) && (!f.source || c.sources.includes(f.source)))
     .filter(c => !f.q || c.name.toLowerCase().includes(f.q.toLowerCase()) || (c.domain ?? '').toLowerCase().includes(f.q.toLowerCase()))
     .sort((a, b) => (b.created ?? '').localeCompare(a.created ?? ''));
 
   return {
-    kpis,
-    lifecycle: [...ordered(stage, LIFECYCLE), ...(stage.get('other') ? [{ key: 'other', label: 'Other', value: stage.get('other')! }] : [])],
-    outreach: ordered(count(rows, c => c.outreach), OUTREACH),
-    sources: toBuckets(count(rows, c => c.sources), [NOT_SET]),
-    markets: toBuckets(count(rows, c => c.market), ['Other', UNKNOWN_COUNTRY]),
-    industries: toBuckets(count(rows, c => c.industry), ['Other', NOT_SET]),
-    priorities: toBuckets(count(rows, c => c.priority), ['Unclassified', NOT_SET]),
+    totals,
+    funnel: FUNNEL.map(st => ({ key: st.key, label: st.label, hint: st.hint, value: totals[st.key] })),
+    contacts: f.market ? null : s.outboundContacts,
+    added,
+    addedPrev,
+    breakdown: {
+      market: funnelRows(rows, c => c.market, ['Other', UNKNOWN_COUNTRY]),
+      source: funnelRows(rows, c => c.sources, [NOT_SET]),
+      industry: funnelRows(rows, c => c.industry, ['Other', NOT_SET]),
+      priority: funnelRows(rows, c => c.priority, ['Unclassified', NOT_SET]),
+    } satisfies Record<BreakdownKey, FunnelRow[]>,
     growth: trend(rows.filter(c => c.created && inRange(c.created, f.from)).map(c => ({ t: c.created!, value: 1 })), f.grain),
     table,
   };
