@@ -8,6 +8,8 @@ import {
   type BreakdownKey, type CompanyRow, type FunnelKey, type FunnelRow,
 } from '@/lib/marketing';
 import { getCompanyDetail, getDataSpace, getSyncStatus } from '@/lib/queries/dataspace';
+import { getOpportunities } from '@/lib/queries/opportunities';
+import { OpportunityPanel } from '@/components/charts/opportunity-panel';
 import { Panel, SectionHeader } from '@/components/charts/panel';
 import { TrendChart } from '@/components/charts/trend-chart';
 import { StatusChip, type ChipTone } from '@/components/charts/status-chip';
@@ -43,10 +45,11 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
   const by = (BREAKDOWNS.find(b => b.key === one(sp.by))?.key ?? 'market') as BreakdownKey;
   const companyId = one(sp.company);
 
-  const [ds, sync, detail] = await Promise.all([
+  const [ds, sync, detail, opps] = await Promise.all([
     getDataSpace(f, extra).catch((e: unknown) => ({ error: e })),
     getSyncStatus().then(r => r.data).catch(() => null),
     companyId ? getCompanyDetail(companyId).catch(() => null) : Promise.resolve(null),
+    getOpportunities(f).catch(() => null),
   ]);
 
   const header = (
@@ -107,6 +110,8 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
           }}
         />
       </Panel>
+
+      <OpportunityPanel className="mt-4" data={opps} portalId={ds.portalId} list />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <Panel

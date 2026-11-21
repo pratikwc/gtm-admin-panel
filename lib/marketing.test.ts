@@ -122,3 +122,34 @@ describe('packSnapshot', () => {
     expect(unpackSnapshot(JSON.parse(JSON.stringify(p)))).toEqual(s);
   });
 });
+
+describe('opportunity source', () => {
+  const positive = { companyIds: new Set(['1']), domains: new Set(['acme.ae']) };
+
+  it('is outbound email only with a positive Instantly reply, else calling', async () => {
+    const { toOpportunityRow, isPositiveReply } = await import('./marketing');
+    expect(toOpportunityRow('1', { name: 'A', lifecyclestage: 'opportunity' }, positive).source).toBe('email');
+    expect(toOpportunityRow('2', { name: 'B', domain: 'www.Acme.ae' }, positive).source).toBe('email');
+    expect(toOpportunityRow('3', { name: 'C', domain: 'other.com' }, positive).source).toBe('calling');
+    expect(isPositiveReply(1)).toBe(true);
+    expect(isPositiveReply(2)).toBe(true);
+    expect(isPositiveReply(0)).toBe(false); // out of office
+    expect(isPositiveReply(-1)).toBe(false);
+    expect(isPositiveReply(null)).toBe(false);
+  });
+
+  it('splits by source within the period, newest first', async () => {
+    const { opportunitySummary } = await import('./marketing');
+    const rows = [
+      { id: '1', name: 'A', market: 'United Arab Emirates', stage: 'opportunity' as const, entered: '2026-11-10', source: 'email' as const },
+      { id: '2', name: 'B', market: 'United Arab Emirates', stage: 'opportunity' as const, entered: '2026-11-15', source: 'calling' as const },
+      { id: '3', name: 'C', market: 'Saudi Arabia', stage: 'customer' as const, entered: '2024-06-01', source: 'calling' as const },
+    ];
+    const s = opportunitySummary(rows, { market: null, from: '2026-11-01' });
+    expect(s.total).toBe(2);
+    expect(s.allTime).toBe(3);
+    expect(s.sources.map(x => x.value)).toEqual([1, 1]);
+    expect(s.rows[0].id).toBe('2');
+    expect(opportunitySummary(rows, { market: 'Saudi Arabia', from: null }).sources.map(x => x.value)).toEqual([0, 1]);
+  });
+});

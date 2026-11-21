@@ -5,6 +5,8 @@ import { fmtAgo, fmtDate, fmtInt, fmtPct } from '@/lib/format';
 import { freshness, type Health } from '@/lib/health';
 import { getPipelineSnapshot } from '@/lib/queries/pipeline';
 import { getHubspotSnapshot, getSyncStatus } from '@/lib/queries/dataspace';
+import { getOpportunities } from '@/lib/queries/opportunities';
+import { OpportunityPanel } from '@/components/charts/opportunity-panel';
 import { funnelCounts } from '@/lib/marketing';
 import { Panel, SectionHeader } from '@/components/charts/panel';
 import { StatusChip, type ChipTone } from '@/components/charts/status-chip';
@@ -20,11 +22,12 @@ const WORD: Record<Health, string> = { ok: 'On schedule', warn: 'Late', bad: 'St
 export default async function OverviewPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const sp = await searchParams;
   const f = parseFilters(sp);
-  const [{ data: p, fetchedAt }, hub, gtmSync] = await Promise.all([
+  const [{ data: p, fetchedAt }, hub, gtmSync, opps] = await Promise.all([
     getPipelineSnapshot(f.from?.toISOString() ?? null),
     // Separate sources: if HubSpot or the research table is down, the rest of Overview still renders.
     getHubspotSnapshot().then(r => r.data).catch(() => null),
     getSyncStatus().then(r => r.data).catch(() => null),
+    getOpportunities(f).catch(() => null),
   ]);
   const qs = new URLSearchParams();
   if (f.range !== '90d') qs.set('range', f.range);
@@ -90,6 +93,8 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </ol>
         </Panel>
       )}
+
+      {hub && <OpportunityPanel className="mb-4" data={opps} />}
 
       <Panel title="Jobs pipeline" description="From scraping to applications. Each stage shows its share of the stage it comes from. Click a stage to open it.">
         <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">

@@ -457,3 +457,67 @@ export function unpackSnapshot(p: PackedSnapshot): HubspotSnapshot {
     portalId: p.portalId,
   };
 }
+
+// ---------------------------------------------------------------- Opportunity source
+
+/** Instantly lead interest statuses that count as a positive reply: Interested, Meeting booked, Meeting completed, Won. */
+export const POSITIVE_INTEREST = [1, 2, 3, 4];
+export const isPositiveReply = (status: number | null | undefined) => status != null && POSITIVE_INTEREST.includes(status);
+
+/**
+ * Where an opportunity came from. Outbound email only when a contact replied positively in Instantly;
+ * everything else came from calling (the team's rule; HubSpot has no channel field for it).
+ */
+export const OPPORTUNITY_SOURCES = [
+  { key: 'email', label: 'Outbound email', hint: 'A contact replied positively in Instantly (Interested, Meeting booked or later).' },
+  { key: 'calling', label: 'Calling', hint: 'Every other opportunity.' },
+] as const;
+export type OpportunitySource = (typeof OPPORTUNITY_SOURCES)[number]['key'];
+
+export interface OpportunityRow {
+  id: string;
+  name: string;
+  market: string;
+  stage: LifecycleKey;
+  entered: string | null; // yyyy-mm-dd, first became an Opportunity
+  source: OpportunitySource;
+}
+
+/** Companies with a positive reply, by HubSpot company id and by email domain (fallback when the contact isn't linked). */
+export interface PositiveReplies {
+  companyIds: Set<string>;
+  domains: Set<string>;
+}
+
+const bareDomain = (d: string | null | undefined) => (d ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+
+export function toOpportunityRow(id: string, p: Props, positive: PositiveReplies): OpportunityRow {
+  const domain = bareDomain(p.domain);
+  return {
+    id,
+    name: (p.name ?? '').slice(0, 80) || p.domain || `Company ${id}`,
+    market: marketOf(p.country),
+    stage: lifecycleKey(p.lifecyclestage),
+    entered: day(p.hs_v2_date_entered_opportunity),
+    source: positive.companyIds.has(id) || (!!domain && positive.domains.has(domain)) ? 'email' : 'calling',
+  };
+}
+
+export function emailDomain(email: string | null | undefined) {
+  const at = (email ?? '').lastIndexOf('@');
+  return at < 0 ? '' : bareDomain(email!.slice(at + 1));
+}
+
+/** Opportunities in the period (by the day they became one) and market, split by source. Newest first. */
+export function opportunitySummary(rows: OpportunityRow[], f: { market: string | null; from: string | null }) {
+  const list = rows
+    .filter(r => (!f.market || r.market === f.market) && (!f.from || inRange(r.entered, f.from)))
+    .sort((a, b) => (b.entered ?? '').localeCompare(a.entered ?? '') || a.name.localeCompare(b.name));
+  const by = count(list, r => r.source);
+  return {
+    total: list.length,
+    allTime: rows.length,
+    sources: OPPORTUNITY_SOURCES.map(s => ({ ...s, value: by.get(s.key) ?? 0 })),
+    rows: list,
+  };
+}

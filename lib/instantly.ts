@@ -1,7 +1,10 @@
 import 'server-only';
 import { env } from './env';
 
-/** Read-only Instantly API v2 client. Only GET requests are made. */
+/**
+ * Read-only Instantly API v2 client. Requests are GETs, except list searches
+ * such as /leads/list that Instantly only offers as POST (they change nothing).
+ */
 
 const BASE = 'https://api.instantly.ai/api/v2';
 
@@ -11,7 +14,7 @@ export class InstantlyError extends Error {
   }
 }
 
-export async function instantly<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
+export async function instantly<T>(path: string, params: Record<string, string | number | undefined> = {}, body?: Record<string, unknown>): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v));
   const url = `${BASE}${path}${qs.size ? `?${qs}` : ''}`;
@@ -19,7 +22,9 @@ export async function instantly<T>(path: string, params: Record<string, string |
     let res: Response;
     try {
       res = await fetch(url, {
-        headers: { Authorization: `Bearer ${env.instantlyKey()}` },
+        method: body ? 'POST' : 'GET',
+        headers: { Authorization: `Bearer ${env.instantlyKey()}`, ...(body ? { 'content-type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
         cache: 'no-store',
         signal: AbortSignal.timeout(15_000),
       });
@@ -41,11 +46,19 @@ export async function instantly<T>(path: string, params: Record<string, string |
 }
 
 /** Follow `next_starting_after` until the list is exhausted (capped for safety). */
-export async function instantlyAll<T>(path: string, params: Record<string, string | number | undefined> = {}, maxPages = 50): Promise<T[]> {
+export async function instantlyAll<T>(
+  path: string,
+  params: Record<string, string | number | undefined> = {},
+  maxPages = 50,
+  search = false, // list searches (POST) take their paging in the body
+): Promise<T[]> {
   const out: T[] = [];
   let cursor: string | undefined;
   for (let i = 0; i < maxPages; i++) {
-    const r = await instantly<{ items: T[]; next_starting_after?: string }>(path, { ...params, limit: 100, starting_after: cursor });
+    const page = { ...params, limit: 100, starting_after: cursor };
+    const r = search
+      ? await instantly<{ items: T[]; next_starting_after?: string }>(path, {}, page)
+      : await instantly<{ items: T[]; next_starting_after?: string }>(path, page);
     out.push(...r.items);
     if (!r.next_starting_after || !r.items.length) break;
     cursor = r.next_starting_after;
@@ -114,4 +127,12 @@ export interface InstantlyAccount {
   stat_warmup_score: number | null;
   setup_pending?: boolean;
   timestamp_created: string;
+}
+
+/** A lead (one person in a campaign). `lt_interest_status`: 1 Interested, 2 Meeting booked, 3 Meeting completed, 4 Won, 0 Out of office, negatives = not interested / wrong person / lost. */
+export interface InstantlyLead {
+  id: string;
+  email: string;
+  company_domain?: string | null;
+  lt_interest_status?: number | null;
 }
