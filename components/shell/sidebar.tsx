@@ -47,9 +47,10 @@ export function Sidebar() {
   return (
     <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r bg-sidebar lg:flex">
       <div className="flex h-16 items-center gap-2.5 border-b px-5">
-        <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">W</div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/icon.svg" alt="" className="h-8 w-8 shrink-0" />
         <div className="leading-tight">
-          <div className="text-sm font-semibold">WhiteCarrot</div>
+          <div className="text-sm font-semibold">Whitecarrot</div>
           <div className="text-xs text-muted-foreground">Data admin</div>
         </div>
       </div>

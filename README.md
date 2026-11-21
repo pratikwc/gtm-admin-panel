@@ -1,4 +1,4 @@
-# WhiteCarrot Admin Panel
+# Whitecarrot Admin Panel
 
 A read-only internal dashboard over our two Supabase projects:
 

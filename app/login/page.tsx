@@ -12,9 +12,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     <main className="grid min-h-screen place-items-center px-4">
       <div className="w-full max-w-sm rounded-2xl border bg-card p-8 shadow-sm">
         <div className="mb-6 flex items-center gap-2.5">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">W</div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icon.svg" alt="" className="h-9 w-9 shrink-0" />
           <div>
-            <div className="font-semibold">WhiteCarrot Admin</div>
+            <div className="font-semibold">Whitecarrot Admin</div>
             <div className="text-sm text-muted-foreground">Jobs &amp; applications data</div>
           </div>
         </div>

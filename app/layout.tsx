@@ -6,7 +6,7 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
 
 export const metadata: Metadata = {
-  title: 'WhiteCarrot Admin',
+  title: 'Whitecarrot Admin',
   description: 'Outbound jobs, Jobs Duniya listings and applications in one place.',
   robots: { index: false, follow: false },
 };

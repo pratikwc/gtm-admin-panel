@@ -141,7 +141,7 @@ export default async function OutboundPage({ searchParams }: { searchParams: Pro
         <Panel title="By seniority" description="LinkedIn experience level.">
           <BarList items={s.seniority} mutedLabels={['Not Applicable']} />
         </Panel>
-        <Panel title="By industry" description="WhiteCarrot industry bucket of the hiring company.">
+        <Panel title="By industry" description="Whitecarrot industry bucket of the hiring company.">
           <BarList items={s.industries} mutedLabels={['Unknown', 'Other']} />
         </Panel>
         <Panel title="Hiring companies by outbound stage" description="Companies with a live job, by how far our outreach has got.">
