@@ -177,4 +177,16 @@ describe('step dates', () => {
     expect(atStep(c, 'replied', '2026-11-01')).toBe(true);
     expect(funnelCounts([c], '2026-11-01')).toMatchObject({ data: 0, researched: 0, reached: 1, replied: 1 });
   });
+
+  it('dates reach-out from the contacts\' last send, not the company field', () => {
+    // No company field at all: the contacts' send still makes it reached.
+    const noField = toCompanyRow('6', { name: 'Co 6' }, undefined, null, '2026-11-20T05:26:41Z');
+    expect(noField.contacted).toBe('2026-11-20');
+    expect(atStep(noField, 'reached', '2026-11-15')).toBe(true);
+    // The company field holds a contact's creation time; the real send wins.
+    const stale = toCompanyRow('7', { name: 'Co 7', instantly_last_contacted_at: '2026-11-01T12:52:51Z' }, undefined, null, '2026-11-20T05:06:17Z');
+    expect(stale.contacted).toBe('2026-11-20');
+    // No emailed contacts: fall back to the company field.
+    expect(company('8', { instantly_last_contacted_at: '2026-11-01T00:00:00Z' }).contacted).toBe('2026-11-01');
+  });
 });

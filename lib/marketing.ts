@@ -227,8 +227,12 @@ const latestDay = (...vs: (string | null | undefined)[]) =>
 /**
  * `positive`: HubSpot ids of companies with a contact who replied positively in Instantly.
  * `contactReplyAt`: latest reply date across the company's contacts (the company field is often empty).
+ * `contactSentAt`: latest email sent to any of the company's contacts. Preferred over the company's
+ * `instantly_last_contacted_at`, which is rarely set and, when it is, holds a contact's creation time, not a send.
  */
-export function toCompanyRow(id: string, p: Props, positive?: Set<string>, contactReplyAt?: string | null): CompanyRow {
+export function toCompanyRow(
+  id: string, p: Props, positive?: Set<string>, contactReplyAt?: string | null, contactSentAt?: string | null,
+): CompanyRow {
   return {
     id,
     name: (p.name ?? '').slice(0, 80) || p.domain || `Company ${id}`,
@@ -241,7 +245,7 @@ export function toCompanyRow(id: string, p: Props, positive?: Set<string>, conta
     industry: p.wc_industry_bucket || NOT_SET,
     priority: priorityLabel(p.company_priority_manual),
     created: day(p.createdate),
-    contacted: day(p.instantly_last_contacted_at),
+    contacted: day(contactSentAt) ?? day(p.instantly_last_contacted_at),
     win: positive?.has(id) ? (wasOpportunity(p) ? 2 : 1) : 0,
     researchedAt: researchDate(p.research_brief_link),
     repliedAt: latestDay(p.instantly_last_reply_at, contactReplyAt),
@@ -425,7 +429,7 @@ export function emailAudience(s: HubspotSnapshot, f: { market: string | null; fr
   const contacts = s.contacts.filter(c => (!f.market || c.market === f.market) && (!f.from || inRange(c.lastSent, f.from)));
   return {
     targetCompanies: companies.length,
-    // In a period: companies first emailed in it. All time: every company emailed so far.
+    // In a period: companies with a contact last emailed in it. All time: every company emailed so far.
     reachedCompanies: companies.filter(c => atStep(c, 'reached', f.from)).length,
     reachedAllTime: companies.filter(isReached).length,
     contacts: contacts.length,

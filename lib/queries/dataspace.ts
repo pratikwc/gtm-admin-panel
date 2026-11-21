@@ -63,13 +63,17 @@ async function snapshot(): Promise<HubspotSnapshot> {
     positiveReplyCompanies(),
   ]);
   const contacts0 = dedupe(contactRecords);
-  // Latest reply per company, from its contacts.
+  // Latest reply and latest email sent per company, from its contacts.
   const replyAt = new Map<string, string>();
-  for (const c of contacts0) {
-    const id = c.properties.associatedcompanyid, at = c.properties.instantly_last_replied_at;
-    if (id && at && at > (replyAt.get(id) ?? '')) replyAt.set(id, at);
+  const sentAt = new Map<string, string>();
+  const keepLatest = (m: Map<string, string>, id: string | null, at: string | null) => {
+    if (id && at && at > (m.get(id) ?? '')) m.set(id, at);
+  };
+  for (const { properties: p } of contacts0) {
+    keepLatest(replyAt, p.associatedcompanyid, p.instantly_last_replied_at);
+    keepLatest(sentAt, p.associatedcompanyid, p.instantly_last_email_sent_at);
   }
-  const companies = dedupe(companyRecords).map(r => toCompanyRow(r.id, r.properties, positive, replyAt.get(r.id)));
+  const companies = dedupe(companyRecords).map(r => toCompanyRow(r.id, r.properties, positive, replyAt.get(r.id), sentAt.get(r.id)));
   const byId = new Map<string, CompanyRow>(companies.map(c => [c.id, c]));
   const contacts = contacts0.map(r => toContactRow(r.properties, byId));
   return { companies, contacts, outboundContacts, portalId };
@@ -81,7 +85,7 @@ function dedupe(records: HsRecord[]) {
 }
 
 // Stored packed (shared value list + indices) to stay under Next's 2MB cache entry limit.
-const packedSnapshot = cached('hubspot-snapshot-v6', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
+const packedSnapshot = cached('hubspot-snapshot-v7', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
 
 export async function getHubspotSnapshot(): Promise<{ data: HubspotSnapshot; fetchedAt: string }> {
   const r = await packedSnapshot();
