@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   campaignStatus, dataSpace, emailAudience, lifecycleKey, mailboxHealth, marketOf, outcomeKey, outreachKey, rate,
-  funnelStep, toCompanyRow, toContactRow, trend, type HubspotSnapshot,
+  funnelCounts, funnelStep, toCompanyRow, toContactRow, trend, type HubspotSnapshot,
 } from './marketing';
 
 describe('vocabularies', () => {
@@ -84,11 +84,11 @@ describe('dataSpace', () => {
 
   it('counts the four nested funnel steps', () => {
     const d = dataSpace(fixture(), base);
-    // 1: replied + contacted -> converted; 2: customer, never reached -> data; 3: research done -> researched
-    expect(d.totals).toMatchObject({ data: 3, researched: 2, reached: 1, converted: 1 });
-    expect(d.funnel.map(s => s.value)).toEqual([3, 2, 1, 1]);
+    // 1: replied + contacted -> replied; 2: customer, never reached -> data; 3: research done -> researched
+    expect(d.totals).toMatchObject({ data: 3, researched: 2, reached: 1, replied: 1, positive: 0, opportunity: 0 });
+    expect(d.funnel.map(s => s.value)).toEqual([3, 2, 1, 1, 0, 0]);
     expect(d.added).toBe(2);
-    expect(d.breakdown.source.find(s => s.label === 'Job scan (Supabase)')?.converted).toBe(1);
+    expect(d.breakdown.source.find(s => s.label === 'Job scan (Supabase)')?.replied).toBe(1);
     expect(d.table[0].id).toBe('3'); // newest first
   });
 
@@ -98,9 +98,9 @@ describe('dataSpace', () => {
     expect(d.table.map(c => c.id)).toEqual(['3']);
   });
 
-  it('counts only email replies as converted, not lifecycle stages', () => {
+  it('counts only email replies as replied, not lifecycle stages', () => {
     expect(funnelStep(company('9', { lifecyclestage: 'opportunity', instantly_last_contacted_at: '2026-11-01' }))).toBe('reached');
-    expect(funnelStep(company('9', { instantly_any_contact_replied: 'true', instantly_last_contacted_at: '2026-11-01' }))).toBe('converted');
+    expect(funnelStep(company('9', { instantly_any_contact_replied: 'true', instantly_last_contacted_at: '2026-11-01' }))).toBe('replied');
   });
 });
 
@@ -123,33 +123,30 @@ describe('packSnapshot', () => {
   });
 });
 
-describe('opportunity source', () => {
-  const positive = { companyIds: new Set(['1']), domains: new Set(['acme.ae']) };
+describe('email funnel: replied, positive reply, opportunity', () => {
+  const positive = new Set(['1', '2']);
+  const reached = { instantly_last_contacted_at: '2026-11-01', instantly_any_contact_replied: 'true' };
 
-  it('is outbound email only with a positive Instantly reply, else calling', async () => {
-    const { toOpportunityRow, isPositiveReply } = await import('./marketing');
-    expect(toOpportunityRow('1', { name: 'A', lifecyclestage: 'opportunity' }, positive).source).toBe('email');
-    expect(toOpportunityRow('2', { name: 'B', domain: 'www.Acme.ae' }, positive).source).toBe('email');
-    expect(toOpportunityRow('3', { name: 'C', domain: 'other.com' }, positive).source).toBe('calling');
-    expect(isPositiveReply(1)).toBe(true);
-    expect(isPositiveReply(2)).toBe(true);
-    expect(isPositiveReply(0)).toBe(false); // out of office
-    expect(isPositiveReply(-1)).toBe(false);
-    expect(isPositiveReply(null)).toBe(false);
+  it('counts opportunities only after a positive reply (email only)', () => {
+    expect(funnelStep(toCompanyRow('1', { ...reached, lifecyclestage: 'opportunity' }, positive))).toBe('opportunity');
+    expect(funnelStep(toCompanyRow('2', { ...reached, lifecyclestage: 'lead' }, positive))).toBe('positive');
+    expect(funnelStep(toCompanyRow('3', { ...reached }, positive))).toBe('replied');
+    // An Opportunity from calling (no positive email reply) is not counted as one.
+    expect(funnelStep(toCompanyRow('4', { lifecyclestage: 'opportunity', hs_v2_date_entered_opportunity: '2026-10-01' }, positive))).toBe('data');
   });
 
-  it('splits by source within the period, newest first', async () => {
-    const { opportunitySummary } = await import('./marketing');
+  it('is cumulative', () => {
     const rows = [
-      { id: '1', name: 'A', market: 'United Arab Emirates', stage: 'opportunity' as const, entered: '2026-11-10', source: 'email' as const },
-      { id: '2', name: 'B', market: 'United Arab Emirates', stage: 'opportunity' as const, entered: '2026-11-15', source: 'calling' as const },
-      { id: '3', name: 'C', market: 'Saudi Arabia', stage: 'customer' as const, entered: '2024-06-01', source: 'calling' as const },
+      toCompanyRow('1', { ...reached, lifecyclestage: 'customer' }, positive),
+      toCompanyRow('2', { ...reached }, positive),
+      toCompanyRow('3', { ...reached }, positive),
     ];
-    const s = opportunitySummary(rows, { market: null, from: '2026-11-01' });
-    expect(s.total).toBe(2);
-    expect(s.allTime).toBe(3);
-    expect(s.sources.map(x => x.value)).toEqual([1, 1]);
-    expect(s.rows[0].id).toBe('2');
-    expect(opportunitySummary(rows, { market: 'Saudi Arabia', from: null }).sources.map(x => x.value)).toEqual([0, 1]);
+    expect(funnelCounts(rows)).toMatchObject({ data: 3, reached: 3, replied: 3, positive: 2, opportunity: 1 });
+  });
+
+  it('treats only Interested and later as positive', async () => {
+    const { isPositiveReply } = await import('./marketing');
+    expect([1, 2, 3, 4].every(isPositiveReply)).toBe(true);
+    expect([0, -1, -2, null].some(isPositiveReply)).toBe(false);
   });
 });

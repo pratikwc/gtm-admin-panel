@@ -5,8 +5,6 @@ import { fmtAgo, fmtDate, fmtInt, fmtPct } from '@/lib/format';
 import { freshness, type Health } from '@/lib/health';
 import { getPipelineSnapshot } from '@/lib/queries/pipeline';
 import { getHubspotSnapshot, getSyncStatus } from '@/lib/queries/dataspace';
-import { getOpportunities } from '@/lib/queries/opportunities';
-import { OpportunityPanel } from '@/components/charts/opportunity-panel';
 import { funnelCounts } from '@/lib/marketing';
 import { Panel, SectionHeader } from '@/components/charts/panel';
 import { StatusChip, type ChipTone } from '@/components/charts/status-chip';
@@ -22,12 +20,11 @@ const WORD: Record<Health, string> = { ok: 'On schedule', warn: 'Late', bad: 'St
 export default async function OverviewPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const sp = await searchParams;
   const f = parseFilters(sp);
-  const [{ data: p, fetchedAt }, hub, gtmSync, opps] = await Promise.all([
+  const [{ data: p, fetchedAt }, hub, gtmSync] = await Promise.all([
     getPipelineSnapshot(f.from?.toISOString() ?? null),
     // Separate sources: if HubSpot or the research table is down, the rest of Overview still renders.
     getHubspotSnapshot().then(r => r.data).catch(() => null),
     getSyncStatus().then(r => r.data).catch(() => null),
-    getOpportunities(f).catch(() => null),
   ]);
   const qs = new URLSearchParams();
   if (f.range !== '90d') qs.set('range', f.range);
@@ -53,7 +50,9 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         { key: 'data', label: 'Data', value: fc.data, hint: 'Target companies in HubSpot', href: '/data' },
         { key: 'researched', label: 'Researched', value: fc.researched, hint: 'Company research done', href: '/data?step=researched#table' },
         { key: 'reached', label: 'Reached out', value: fc.reached, hint: 'At least one contact emailed', href: '/reached' },
-        { key: 'converted', label: 'Converted', value: fc.converted, hint: 'A contact replied to our email', href: '/data?step=converted#table' },
+        { key: 'replied', label: 'Replied', value: fc.replied, hint: 'A contact replied to our email (any reply)', href: '/data?step=replied#table' },
+        { key: 'positive', label: 'Positive reply', value: fc.positive, hint: 'Interested or meeting booked in Instantly', href: '/data?step=positive#table' },
+        { key: 'opportunity', label: 'Opportunity', value: fc.opportunity, hint: 'Positive reply that became an Opportunity (email only)', href: '/data?step=opportunity#table' },
       ]
     : null;
 
@@ -69,8 +68,8 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
       <JdApiBanner />
 
       {marketing && (
-        <Panel className="mb-4" title="Marketing funnel" description="How much data we have, how much is researched, how many we reached out to, and how many converted. Click a step to open it.">
-          <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <Panel className="mb-4" title="Marketing funnel" description="From data to opportunity through outbound email: how much data we have, how much is researched, who we emailed, who replied, who replied positively, and who became an Opportunity. Click a step to open it.">
+          <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
             {marketing.map((s, i) => {
               const prev = i === 0 ? null : marketing[i - 1];
               const conv = prev?.value ? s.value / prev.value : null;
@@ -93,8 +92,6 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
           </ol>
         </Panel>
       )}
-
-      {hub && <OpportunityPanel className="mb-4" data={opps} />}
 
       <Panel title="Jobs pipeline" description="From scraping to applications. Each stage shows its share of the stage it comes from. Click a stage to open it.">
         <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">

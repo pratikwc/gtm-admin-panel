@@ -182,6 +182,8 @@ export interface CompanyRow {
   priority: string;
   created: string | null; // yyyy-mm-dd
   contacted: string | null; // yyyy-mm-dd, last Instantly contact
+  /** Email outcome beyond a reply: 0 none, 1 positive Instantly reply, 2 positive reply and then an Opportunity. */
+  win: 0 | 1 | 2;
 }
 
 /** One contact we've emailed (has Instantly activity in HubSpot). */
@@ -206,7 +208,12 @@ export interface HubspotSnapshot {
 type Props = Record<string, string | null>;
 const day = (v: string | null | undefined) => (v ? v.slice(0, 10) : null);
 
-export function toCompanyRow(id: string, p: Props): CompanyRow {
+/** Became an Opportunity at some point (still one, or moved on to customer). */
+const wasOpportunity = (p: Props) =>
+  !!p.hs_v2_date_entered_opportunity || ['opportunity', 'customer'].includes(lifecycleKey(p.lifecyclestage));
+
+/** `positive`: HubSpot ids of companies with a contact who replied positively in Instantly. */
+export function toCompanyRow(id: string, p: Props, positive?: Set<string>): CompanyRow {
   return {
     id,
     name: (p.name ?? '').slice(0, 80) || p.domain || `Company ${id}`,
@@ -220,6 +227,7 @@ export function toCompanyRow(id: string, p: Props): CompanyRow {
     priority: priorityLabel(p.company_priority_manual),
     created: day(p.createdate),
     contacted: day(p.instantly_last_contacted_at),
+    win: positive?.has(id) ? (wasOpportunity(p) ? 2 : 1) : 0,
   };
 }
 
@@ -248,41 +256,49 @@ export const FUNNEL = [
   { key: 'data', label: 'Data', status: 'Not researched', hint: 'Target companies in HubSpot (Record type = Leads for outbound).' },
   { key: 'researched', label: 'Researched', status: 'Researched', hint: 'Company research is done, including every company that went further.' },
   { key: 'reached', label: 'Reached out', status: 'Reached out', hint: 'At least one contact emailed through Instantly.' },
-  { key: 'converted', label: 'Converted', status: 'Converted', hint: 'Reached out, and a contact replied to our email.' },
+  { key: 'replied', label: 'Replied', status: 'Replied', hint: 'A contact replied to our email. Any reply, including not interested.' },
+  { key: 'positive', label: 'Positive reply', status: 'Positive reply', hint: 'A contact replied positively in Instantly: Interested, Meeting booked or later.' },
+  { key: 'opportunity', label: 'Opportunity', status: 'Opportunity', hint: 'Replied positively to our email, then became an Opportunity in HubSpot. Email only for now.' },
 ] as const;
 export type FunnelKey = (typeof FUNNEL)[number]['key'];
 
-// Converted = replied to our email. Lifecycle stages aren't used: HubSpot's "Lead" is set when outreach starts,
-// and Opportunities also come from calls, with nothing in HubSpot saying which channel created them.
-export const isConverted = (c: CompanyRow) => isReached(c) && c.outreach === 'replied';
+// Replied = replied to our email. Positive reply comes from the Instantly lead interest status. Opportunity only
+// counts companies that replied positively first: Opportunities from calling are left out for now.
+export const isReplied = (c: CompanyRow) => c.win > 0 || (isReached(c) && c.outreach === 'replied');
 
 /** Furthest step a company has reached. */
 export function funnelStep(c: CompanyRow): FunnelKey {
-  if (isConverted(c)) return 'converted';
+  if (c.win === 2) return 'opportunity';
+  if (c.win === 1) return 'positive';
+  if (isReplied(c)) return 'replied';
   if (isReached(c)) return 'reached';
   if (isResearched(c)) return 'researched';
   return 'data';
 }
 
-const STEP_RANK: Record<FunnelKey, number> = { data: 0, researched: 1, reached: 2, converted: 3 };
+const STEP_RANK: Record<FunnelKey, number> = { data: 0, researched: 1, reached: 2, replied: 3, positive: 4, opportunity: 5 };
 
 export interface FunnelRow {
   label: string;
   data: number;
   researched: number;
   reached: number;
-  converted: number;
+  replied: number;
+  positive: number;
+  opportunity: number;
 }
 
-/** Cumulative step counts: a converted company also counts as researched and reached. */
+/** Cumulative step counts: a company that replied also counts as researched and reached, and so on. */
 export function funnelCounts(rows: CompanyRow[]): FunnelRow {
-  const r: FunnelRow = { label: 'All', data: 0, researched: 0, reached: 0, converted: 0 };
+  const r: FunnelRow = { label: 'All', data: 0, researched: 0, reached: 0, replied: 0, positive: 0, opportunity: 0 };
   for (const c of rows) {
     const k = STEP_RANK[funnelStep(c)];
     r.data++;
     if (k >= 1) r.researched++;
     if (k >= 2) r.reached++;
-    if (k >= 3) r.converted++;
+    if (k >= 3) r.replied++;
+    if (k >= 4) r.positive++;
+    if (k >= 5) r.opportunity++;
   }
   return r;
 }
@@ -417,7 +433,7 @@ export function packSnapshot(s: HubspotSnapshot): PackedSnapshot {
     v: 1,
     dict,
     companies: s.companies.map(c => [
-      c.id, c.name, c.domain, d(c.market), d(c.stage), c.sources.map(d), d(c.outreach), d(c.industry), d(c.priority), c.created, c.contacted,
+      c.id, c.name, c.domain, d(c.market), d(c.stage), c.sources.map(d), d(c.outreach), d(c.industry), d(c.priority), c.created, c.contacted, c.win,
     ]),
     contacts: s.contacts.map(c => [
       d(c.market), d(c.outcome), d(c.campaign), d(c.mailbox), c.lastSent, d(c.industry), d(c.priority), c.companyId,
@@ -442,6 +458,7 @@ export function unpackSnapshot(p: PackedSnapshot): HubspotSnapshot {
       priority: w(r[8]),
       created: r[9] as string | null,
       contacted: r[10] as string | null,
+      win: ((r[11] as number | undefined) ?? 0) as 0 | 1 | 2,
     })),
     contacts: p.contacts.map(r => ({
       market: w(r[0]),
@@ -458,66 +475,8 @@ export function unpackSnapshot(p: PackedSnapshot): HubspotSnapshot {
   };
 }
 
-// ---------------------------------------------------------------- Opportunity source
+// ---------------------------------------------------------------- Positive replies
 
 /** Instantly lead interest statuses that count as a positive reply: Interested, Meeting booked, Meeting completed, Won. */
 export const POSITIVE_INTEREST = [1, 2, 3, 4];
 export const isPositiveReply = (status: number | null | undefined) => status != null && POSITIVE_INTEREST.includes(status);
-
-/**
- * Where an opportunity came from. Outbound email only when a contact replied positively in Instantly;
- * everything else came from calling (the team's rule; HubSpot has no channel field for it).
- */
-export const OPPORTUNITY_SOURCES = [
-  { key: 'email', label: 'Outbound email', hint: 'A contact replied positively in Instantly (Interested, Meeting booked or later).' },
-  { key: 'calling', label: 'Calling', hint: 'Every other opportunity.' },
-] as const;
-export type OpportunitySource = (typeof OPPORTUNITY_SOURCES)[number]['key'];
-
-export interface OpportunityRow {
-  id: string;
-  name: string;
-  market: string;
-  stage: LifecycleKey;
-  entered: string | null; // yyyy-mm-dd, first became an Opportunity
-  source: OpportunitySource;
-}
-
-/** Companies with a positive reply, by HubSpot company id and by email domain (fallback when the contact isn't linked). */
-export interface PositiveReplies {
-  companyIds: Set<string>;
-  domains: Set<string>;
-}
-
-const bareDomain = (d: string | null | undefined) => (d ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
-
-export function toOpportunityRow(id: string, p: Props, positive: PositiveReplies): OpportunityRow {
-  const domain = bareDomain(p.domain);
-  return {
-    id,
-    name: (p.name ?? '').slice(0, 80) || p.domain || `Company ${id}`,
-    market: marketOf(p.country),
-    stage: lifecycleKey(p.lifecyclestage),
-    entered: day(p.hs_v2_date_entered_opportunity),
-    source: positive.companyIds.has(id) || (!!domain && positive.domains.has(domain)) ? 'email' : 'calling',
-  };
-}
-
-export function emailDomain(email: string | null | undefined) {
-  const at = (email ?? '').lastIndexOf('@');
-  return at < 0 ? '' : bareDomain(email!.slice(at + 1));
-}
-
-/** Opportunities in the period (by the day they became one) and market, split by source. Newest first. */
-export function opportunitySummary(rows: OpportunityRow[], f: { market: string | null; from: string | null }) {
-  const list = rows
-    .filter(r => (!f.market || r.market === f.market) && (!f.from || inRange(r.entered, f.from)))
-    .sort((a, b) => (b.entered ?? '').localeCompare(a.entered ?? '') || a.name.localeCompare(b.name));
-  const by = count(list, r => r.source);
-  return {
-    total: list.length,
-    allTime: rows.length,
-    sources: OPPORTUNITY_SOURCES.map(s => ({ ...s, value: by.get(s.key) ?? 0 })),
-    rows: list,
-  };
-}

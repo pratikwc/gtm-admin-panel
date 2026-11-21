@@ -8,8 +8,6 @@ import {
   type BreakdownKey, type CompanyRow, type FunnelKey, type FunnelRow,
 } from '@/lib/marketing';
 import { getCompanyDetail, getDataSpace, getSyncStatus } from '@/lib/queries/dataspace';
-import { getOpportunities } from '@/lib/queries/opportunities';
-import { OpportunityPanel } from '@/components/charts/opportunity-panel';
 import { Panel, SectionHeader } from '@/components/charts/panel';
 import { TrendChart } from '@/components/charts/trend-chart';
 import { StatusChip, type ChipTone } from '@/components/charts/status-chip';
@@ -31,9 +29,11 @@ const STEP_COLOR: Record<FunnelKey, string> = {
   data: 'var(--viz-track)',
   researched: 'var(--ord-2)',
   reached: 'var(--ord-4)',
-  converted: 'var(--status-good)',
+  replied: 'var(--ord-5)',
+  positive: 'var(--status-good)',
+  opportunity: 'var(--good-text)',
 };
-const STEP_TONE: Record<FunnelKey, ChipTone> = { data: 'neutral', researched: 'info', reached: 'info', converted: 'good' };
+const STEP_TONE: Record<FunnelKey, ChipTone> = { data: 'neutral', researched: 'info', reached: 'info', replied: 'info', positive: 'good', opportunity: 'good' };
 const STATUS_LABEL = Object.fromEntries(FUNNEL.map(s => [s.key, s.status])) as Record<FunnelKey, string>;
 const STAGE_LABEL: Record<string, string> = Object.fromEntries(LIFECYCLE.map(s => [s.key, s.label]));
 const MUTED = ['Other', UNKNOWN_COUNTRY, NOT_SET, 'Unclassified'];
@@ -45,17 +45,16 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
   const by = (BREAKDOWNS.find(b => b.key === one(sp.by))?.key ?? 'market') as BreakdownKey;
   const companyId = one(sp.company);
 
-  const [ds, sync, detail, opps] = await Promise.all([
+  const [ds, sync, detail] = await Promise.all([
     getDataSpace(f, extra).catch((e: unknown) => ({ error: e })),
     getSyncStatus().then(r => r.data).catch(() => null),
     companyId ? getCompanyDetail(companyId).catch(() => null) : Promise.resolve(null),
-    getOpportunities(f).catch(() => null),
   ]);
 
   const header = (
     <SectionHeader
       title="Data space"
-      description="How much data we have, how much of it is researched, how many companies we have reached out to, and how many converted. Counts are where things stand today."
+      description="How much data we have, how much of it is researched, who we emailed, who replied, who replied positively, and who became an Opportunity. Email only for now. Counts are where things stand today."
     >
       {'error' in ds ? null : <DataAsOf at={ds.fetchedAt} />}
     </SectionHeader>
@@ -84,7 +83,7 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
       <Panel
         className="mt-4"
         title={`Funnel by ${BREAKDOWNS.find(b => b.key === by)!.label.toLowerCase()}`}
-        description="The same four steps, split up, so you can see where data is thin and where it converts."
+        description="The same steps, split up, so you can see where data is thin and where it turns into replies."
         action={
           <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-0.5">
             {BREAKDOWNS.map(b => (
@@ -110,8 +109,6 @@ export default async function DataSpacePage({ searchParams }: { searchParams: Pr
           }}
         />
       </Panel>
-
-      <OpportunityPanel className="mt-4" data={opps} portalId={ds.portalId} list />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <Panel
@@ -230,18 +227,20 @@ function FunnelHero({
     data: '',
     researched: `${fmtInt(stuck)} companies (${fmtPct(rate(stuck, totals.data))}) have no research yet. Research is the biggest bottleneck.`,
     reached: `${fmtInt(stuck)} researched companies haven't been emailed yet. Getting them into a sequence is the biggest gap.`,
-    converted: `Only ${fmtPct(weakest.stepRate, 1)} of the companies we reached have converted. Replies are the biggest gap.`,
+    replied: `Only ${fmtPct(weakest.stepRate, 1)} of the companies we emailed have replied. Replies are the biggest gap.`,
+    positive: `Only ${fmtInt(weakest.value)} of ${fmtInt(totals.replied)} replies were positive. Reply quality is the biggest gap.`,
+    opportunity: `${fmtInt(stuck)} positive replies haven't become an Opportunity yet. Following them up is the biggest gap.`,
   }[weakest.key];
 
   return (
-    <section className="rounded-2xl border bg-card">
-      <ol className="grid divide-y md:grid-cols-4 md:divide-x md:divide-y-0">
+    <section className="overflow-hidden rounded-2xl border bg-border">
+      <ol className="grid gap-px sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         {steps.map((s, i) => {
           const isActive = active === s.key;
           return (
-            <li key={s.key} className="relative">
+            <li key={s.key} className="relative bg-card">
               {i > 0 && (
-                <span className="absolute -left-3 top-1/2 z-10 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border bg-card text-muted-foreground md:flex" aria-hidden>
+                <span className="absolute -left-3 top-1/2 z-10 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border bg-card text-muted-foreground 2xl:flex" aria-hidden>
                   <ChevronRight className="h-3.5 w-3.5" />
                 </span>
               )}
@@ -249,13 +248,13 @@ function FunnelHero({
                 href={hrefFor(s.key)}
                 scroll={false}
                 title={s.hint}
-                className={`group flex h-full flex-col p-5 transition-colors hover:bg-accent/40 ${isActive ? 'bg-accent/50' : ''} ${i === 0 ? 'rounded-t-xl md:rounded-l-xl md:rounded-tr-none' : ''} ${i === steps.length - 1 ? 'rounded-b-xl md:rounded-r-xl md:rounded-bl-none' : ''}`}
+                className={`group flex h-full flex-col p-5 transition-colors hover:bg-accent/40 ${isActive ? 'bg-accent/50' : ''}`}
               >
                 <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   <span className="tabular flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] text-foreground">{i + 1}</span>
                   {s.label}
                 </span>
-                <span className="tabular mt-3 text-4xl font-semibold tracking-tight">{fmtInt(s.value)}</span>
+                <span className="tabular mt-3 font-display text-[34px] font-bold leading-none tracking-tight">{fmtInt(s.value)}</span>
                 <span className="mt-1 text-sm text-muted-foreground">
                   {s.key === 'data' ? (
                     <>
@@ -282,7 +281,7 @@ function FunnelHero({
         })}
       </ol>
       {message && (
-        <p className="flex items-start gap-2 border-t px-5 py-3 text-sm">
+        <p className="flex items-start gap-2 bg-card px-5 py-3 text-sm">
           <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <span>{message}</span>
         </p>
@@ -296,15 +295,17 @@ function BreakdownTable({ rows, hrefFor }: { rows: FunnelRow[]; hrefFor: (r: Fun
   if (!rows.length) return <p className="py-8 text-center text-sm text-muted-foreground">No data.</p>;
   const shown = rows.slice(0, 10);
   const segments = (r: FunnelRow) => [
-    { key: 'converted' as const, value: r.converted },
-    { key: 'reached' as const, value: r.reached - r.converted },
+    { key: 'opportunity' as const, value: r.opportunity },
+    { key: 'positive' as const, value: r.positive - r.opportunity },
+    { key: 'replied' as const, value: r.replied - r.positive },
+    { key: 'reached' as const, value: r.reached - r.replied },
     { key: 'researched' as const, value: r.researched - r.reached },
     { key: 'data' as const, value: r.data - r.researched },
   ];
   return (
     <>
       <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        {(['converted', 'reached', 'researched', 'data'] as const).map(k => (
+        {(['opportunity', 'positive', 'replied', 'reached', 'researched', 'data'] as const).map(k => (
           <span key={k} className="inline-flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-sm" style={{ background: STEP_COLOR[k] }} />
             {STATUS_LABEL[k]}
@@ -319,7 +320,9 @@ function BreakdownTable({ rows, hrefFor }: { rows: FunnelRow[]; hrefFor: (r: Fun
               <TableHead className="text-right">Data</TableHead>
               <TableHead className="text-right">Researched</TableHead>
               <TableHead className="text-right">Reached out</TableHead>
-              <TableHead className="text-right">Converted</TableHead>
+              <TableHead className="text-right">Replied</TableHead>
+              <TableHead className="text-right">Positive</TableHead>
+              <TableHead className="text-right">Opportunity</TableHead>
               <TableHead className="hidden w-[32%] pr-1 md:table-cell">Where it stands</TableHead>
             </TableRow>
           </TableHeader>
@@ -335,7 +338,9 @@ function BreakdownTable({ rows, hrefFor }: { rows: FunnelRow[]; hrefFor: (r: Fun
                   <TableCell className="tabular text-right text-sm font-semibold">{fmtInt(r.data)}</TableCell>
                   <Cell value={r.researched} of={r.data} />
                   <Cell value={r.reached} of={r.data} />
-                  <Cell value={r.converted} of={r.reached} good />
+                  <Cell value={r.replied} of={r.reached} />
+                  <Cell value={r.positive} of={r.replied} good />
+                  <Cell value={r.opportunity} of={r.positive} good />
                   <TableCell className="hidden pr-1 md:table-cell">
                     <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-[var(--viz-track)]">
                       {segments(r).map(s => (s.value > 0 ? <span key={s.key} style={{ width: `${(s.value / r.data) * 100}%`, background: STEP_COLOR[s.key] }} /> : null))}
@@ -348,7 +353,7 @@ function BreakdownTable({ rows, hrefFor }: { rows: FunnelRow[]; hrefFor: (r: Fun
         </Table>
       </div>
       {rows.length > shown.length && <p className="mt-2 text-xs text-muted-foreground">Top 10 of {rows.length}, by amount of data.</p>}
-      <p className="mt-2 text-xs text-muted-foreground">Researched and Reached out show the share of data; Converted shows the share of reached out.</p>
+      <p className="mt-2 text-xs text-muted-foreground">Researched and Reached out show the share of data; each later step shows the share of the step before it.</p>
     </>
   );
 }

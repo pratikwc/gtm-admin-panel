@@ -1,9 +1,10 @@
 import 'server-only';
 import { cached } from '../cache';
 import { gtm } from '../db/gtm';
-import { hsCount, hsGet, hsPortalId, hsSearchAll, type HsRecord } from '../hubspot';
+import { hubspot, hsCount, hsGet, hsPortalId, hsSearchAll, type HsRecord } from '../hubspot';
+import { instantlyAll, type InstantlyLead } from '../instantly';
 import {
-  dataSpace, FUNNEL, funnelStep, grainFor, isoDay, packSnapshot, toCompanyRow, toContactRow, unpackSnapshot,
+  dataSpace, FUNNEL, funnelStep, grainFor, isoDay, isPositiveReply, packSnapshot, toCompanyRow, toContactRow, unpackSnapshot,
   type CompanyRow, type HubspotSnapshot, type PackedSnapshot,
 } from '../marketing';
 import type { Filters } from '../filters';
@@ -11,6 +12,7 @@ import type { Filters } from '../filters';
 const COMPANY_PROPS = [
   'name', 'domain', 'country', 'lifecyclestage', 'lead_sources', 'instantly_company_status',
   'instantly_last_contacted_at', 'instantly_any_contact_replied', 'wc_industry_bucket', 'company_priority_manual', 'createdate',
+  'hs_v2_date_entered_opportunity',
 ];
 const CONTACT_PROPS = [
   'country', 'associatedcompanyid', 'instantly_status', 'instantly_unsubscribed', 'instantly_campaign_name',
@@ -19,11 +21,33 @@ const CONTACT_PROPS = [
 const OUTBOUND = 'Leads for outbound';
 
 /**
+ * HubSpot ids of companies with a contact who replied positively in Instantly
+ * (lead interest status Interested / Meeting booked / Meeting completed / Won).
+ */
+async function positiveReplyCompanies(): Promise<Set<string>> {
+  const leads = await instantlyAll<InstantlyLead>('/leads/list', {}, 300, true);
+  const emails = [...new Set(leads.filter(l => isPositiveReply(l.lt_interest_status)).map(l => l.email.toLowerCase()))];
+  const ids = new Set<string>();
+  for (let i = 0; i < emails.length; i += 100) {
+    const r = await hubspot<{ results: HsRecord[] }>('/crm/v3/objects/contacts/search', {
+      method: 'POST',
+      body: {
+        filterGroups: [{ filters: [{ propertyName: 'email', operator: 'IN', values: emails.slice(i, i + 100) }] }],
+        properties: ['associatedcompanyid'],
+        limit: 100,
+      },
+    });
+    for (const c of r.results) if (c.properties.associatedcompanyid) ids.add(c.properties.associatedcompanyid);
+  }
+  return ids;
+}
+
+/**
  * Full read of HubSpot target companies and emailed contacts, reduced to compact rows.
  * Takes ~15s, so it is cached for an hour and refreshed in the background.
  */
 async function snapshot(): Promise<HubspotSnapshot> {
-  const [companyRecords, contactRecords, outboundContacts, portalId] = await Promise.all([
+  const [companyRecords, contactRecords, outboundContacts, portalId, positive] = await Promise.all([
     hsSearchAll('companies', [[{ propertyName: 'record_type', operator: 'EQ', value: OUTBOUND }]], COMPANY_PROPS),
     hsSearchAll(
       'contacts',
@@ -36,8 +60,9 @@ async function snapshot(): Promise<HubspotSnapshot> {
     ),
     hsCount('contacts', [{ propertyName: 'contact_record_type', operator: 'EQ', value: OUTBOUND }]),
     hsPortalId(),
+    positiveReplyCompanies(),
   ]);
-  const companies = dedupe(companyRecords).map(r => toCompanyRow(r.id, r.properties));
+  const companies = dedupe(companyRecords).map(r => toCompanyRow(r.id, r.properties, positive));
   const byId = new Map<string, CompanyRow>(companies.map(c => [c.id, c]));
   const contacts = dedupe(contactRecords).map(r => toContactRow(r.properties, byId));
   return { companies, contacts, outboundContacts, portalId };
@@ -49,7 +74,7 @@ function dedupe(records: HsRecord[]) {
 }
 
 // Stored packed (shared value list + indices) to stay under Next's 2MB cache entry limit.
-const packedSnapshot = cached('hubspot-snapshot-v4', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
+const packedSnapshot = cached('hubspot-snapshot-v5', 'hubspot', async (): Promise<PackedSnapshot> => packSnapshot(await snapshot()), 3600);
 
 export async function getHubspotSnapshot(): Promise<{ data: HubspotSnapshot; fetchedAt: string }> {
   const r = await packedSnapshot();
